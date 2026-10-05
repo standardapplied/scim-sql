@@ -1,11 +1,27 @@
 grammar Scim;
 
+filter
+    : query EOF
+    ;
+
 query
     : NOT? SP? '(' query ')'                                                                         #parenExp
     | query SP LOGICAL_OPERATOR SP query                                                             #logicalExp
     | attrPath SP 'pr'                                                                               #presentExp
     | attrPath SP 'in' SP arrayValue                                                                 #inExp
     | attrPath SP op=( 'eq' | 'ne' | 'gt' | 'lt' | 'ge' | 'le' | 'co' | 'sw' | 'ew' ) SP value       #compareExp
+    ;
+
+LPAREN
+    : '('
+    ;
+
+RPAREN
+    : ')'
+    ;
+
+DOT
+    : '.'
     ;
 
 NOT
