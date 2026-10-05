@@ -6,6 +6,7 @@
 package ai.singlr.scimsql;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -13,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
 import java.util.Random;
+import java.util.Set;
 import org.antlr.v4.runtime.CharStreams;
 import org.antlr.v4.runtime.CommonTokenStream;
 import org.junit.jupiter.api.BeforeEach;
@@ -976,6 +978,130 @@ class ScimEngineTest {
     void shouldRenderMixedOperatorsWithSqlPrecedence() {
       Filter result = engine.parseFilter("a eq 1 or b eq 2 and c eq 3", "t", null);
       assertEquals("t.a = :a1 OR t.b = :b1 AND t.c = :c1", result.toClause());
+    }
+  }
+
+  @Nested
+  @DisplayName("Allowlist")
+  class AllowlistTests {
+
+    @Test
+    @DisplayName("A presence check on an attribute outside the allowlist is invalid")
+    void shouldRejectAPresenceCheckOutsideTheAllowlist() {
+      Filter result = engine.parseFilter("secret pr", "t", null);
+      assertFalse(result.context().isValid(Set.of("name")));
+
+      result.toClause();
+      assertFalse(result.context().isValid(Set.of("name")));
+      assertTrue(result.context().isValid(Set.of("secret")));
+    }
+
+    @Test
+    @DisplayName("A presence check hidden among allowed comparisons is invalid")
+    void shouldRejectAPresenceCheckAmongAllowedComparisons() {
+      Filter result = engine.parseFilter("name eq \"John\" and secret pr and age gt 21", "t", null);
+      result.toClause();
+
+      assertFalse(result.context().isValid(Set.of("name", "age")));
+      assertTrue(result.context().isValid(Set.of("name", "age", "secret")));
+    }
+
+    @ParameterizedTest(name = "is invalid [{0}]")
+    @ValueSource(
+        strings = {
+          "not (secret pr)",
+          "name eq \"John\" or (age gt 21 and (secret pr))",
+          "not (name eq \"John\" and not (secret pr))"
+        })
+    @DisplayName("A presence check is seen wherever it is nested")
+    void shouldSeeAPresenceCheckWhereverItIsNested(String filter) {
+      Filter result = engine.parseFilter(filter, "t", null);
+      assertFalse(result.context().isValid(Set.of("name", "age")));
+    }
+
+    @Test
+    @DisplayName("The allowlist applies before the clause is rendered")
+    void shouldApplyTheAllowlistBeforeRendering() {
+      Filter result = engine.parseFilter("name eq \"John\" and age gt 21", "t", null);
+
+      assertFalse(result.context().isValid(Set.of("name")));
+      assertTrue(result.context().isValid(Set.of("name", "age")));
+    }
+
+    @Test
+    @DisplayName("The allowlist applies to a list check before the clause is rendered")
+    void shouldApplyTheAllowlistToAListCheckBeforeRendering() {
+      Filter result = engine.parseFilter("id in [1, 2]", "t", null);
+
+      assertFalse(result.context().isValid(Set.of("name")));
+      assertTrue(result.context().isValid(Set.of("id")));
+    }
+
+    @Test
+    @DisplayName("An aliased attribute is checked by its full path")
+    void shouldCheckAnAliasedAttributeByItsFullPath() {
+      Filter result = engine.parseFilter("u.userName pr and u.email eq \"a@b.c\"", "t", null);
+
+      assertFalse(result.context().isValid(Set.of("userName", "email")));
+      assertTrue(result.context().isValid(Set.of("u.userName", "u.email")));
+    }
+
+    @Test
+    @DisplayName("A custom comparison builder does not hide the attribute")
+    void shouldSeeTheAttributeThroughACustomComparisonBuilder() {
+      Filter result =
+          engine.parseFilter("tags eq \"admin\"", "t", ComparisonFilter.ListFilter::new);
+
+      assertFalse(result.context().isValid(Set.of("name")));
+      assertTrue(result.context().isValid(Set.of("tags")));
+    }
+
+    @Test
+    @DisplayName("Rendering does not change the verdict")
+    void shouldGiveTheSameVerdictBeforeAndAfterRendering() {
+      Filter result =
+          engine.parseFilter("name eq \"John\" and age gt 21 and id in [1, 2]", "t", null);
+      var before = result.context().isValid(Set.of("name", "age", "id"));
+      result.toClause();
+      result.toClause();
+
+      assertTrue(before);
+      assertTrue(result.context().isValid(Set.of("name", "age", "id")));
+      assertFalse(result.context().isValid(Set.of("name", "age")));
+    }
+
+    @Test
+    @DisplayName("A builder that renames the attribute is checked by the new name only")
+    void shouldCheckARenamedAttributeByItsNewName() {
+      Filter result =
+          engine.parseFilter(
+              "email eq \"a@b.c\"",
+              "t",
+              cf ->
+                  new ComparisonFilter(
+                      new AttributeFilter("emailAddress", null, "u", cf.context()),
+                      cf.operator(),
+                      cf.value(),
+                      cf.context()));
+
+      assertTrue(result.context().isValid(Set.of("emailAddress")));
+      assertFalse(result.context().isValid(Set.of("email")));
+      assertEquals("u.email_address = :emailAddress1", result.toClause());
+      assertTrue(result.context().isValid(Set.of("emailAddress")));
+    }
+
+    @Test
+    @DisplayName("A client filter can be checked on its own before it is scoped")
+    void shouldCheckAClientFilterBeforeScoping() {
+      var clientFilter = "name eq \"John\"";
+      var clientIsValid =
+          engine.parseFilter(clientFilter, "t", null).context().isValid(Set.of("name"));
+      var scoped = engine.scopeFilter("not (deletedAt pr)", clientFilter);
+
+      assertTrue(clientIsValid);
+      assertFalse(engine.parseFilter(scoped, "t", null).context().isValid(Set.of("name")));
+      assertTrue(
+          engine.parseFilter(scoped, "t", null).context().isValid(Set.of("name", "deletedAt")));
     }
   }
 

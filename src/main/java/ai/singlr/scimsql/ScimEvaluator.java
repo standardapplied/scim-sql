@@ -58,6 +58,7 @@ public class ScimEvaluator extends ScimBaseVisitor<Filter> {
   @Override
   public Filter visitPresentExp(ScimParser.PresentExpContext ctx) {
     Filter attributePath = visitAttrPath(ctx.attrPath());
+    context.reference(attributePath);
     return new PresentFilter(attributePath);
   }
 
@@ -65,6 +66,7 @@ public class ScimEvaluator extends ScimBaseVisitor<Filter> {
   public Filter visitInExp(ScimParser.InExpContext ctx) {
     Filter attributePath = visitAttrPath(ctx.attrPath());
     Filter values = visitArrayValue(ctx.arrayValue());
+    context.reference(attributePath);
     return new InFilter(attributePath, (ArrayValueFilter) values, context);
   }
 
@@ -74,8 +76,10 @@ public class ScimEvaluator extends ScimBaseVisitor<Filter> {
     String operator = ctx.op.getText();
     Filter value = visit(ctx.value());
 
-    return compareFilterBuilder.apply(
-        new ComparisonFilter(attributePath, operator, value, context));
+    var comparison =
+        compareFilterBuilder.apply(new ComparisonFilter(attributePath, operator, value, context));
+    context.reference(comparison.attribute());
+    return comparison;
   }
 
   @Override

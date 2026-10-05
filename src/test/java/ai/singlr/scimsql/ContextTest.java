@@ -144,4 +144,46 @@ class ContextTest {
     var context = new Context();
     assertTrue(context.isValid(Set.of()));
   }
+
+  @Test
+  @DisplayName("isValid sees an attribute processed as a list")
+  void shouldSeeAnAttributeProcessedAsAList() {
+    var context = new Context();
+    var attr = new AttributeFilter("id", null, "t", context);
+    context.processArray(attr, List.<Filter>of(new ValueFilter(1L, context)), k -> ":" + k);
+
+    assertFalse(context.isValid(Set.of("name")));
+    assertTrue(context.isValid(Set.of("id")));
+  }
+
+  @Test
+  @DisplayName("isValid sees a recorded attribute that binds no parameter")
+  void shouldSeeARecordedAttributeThatBindsNoParameter() {
+    var context = new Context();
+    var sub = new AttributeFilter("userName", null, "", context);
+    context.reference(new AttributeFilter("u", sub, "t", context));
+
+    assertFalse(context.isValid(Set.of("userName")));
+    assertTrue(context.isValid(Set.of("u.userName")));
+    assertTrue(context.indexedParams().isEmpty());
+  }
+
+  @Test
+  @DisplayName("Building a filter by hand records nothing")
+  void shouldRecordNothingWhenAFilterIsOnlyBuilt() {
+    var context = new Context();
+    var attr = new AttributeFilter("scratch", null, "t", context);
+    new PresentFilter(attr);
+    new ComparisonFilter(attr, "eq", new ValueFilter("x", context), context);
+
+    assertTrue(context.isValid(Set.of()));
+  }
+
+  @Test
+  @DisplayName("A presence check needs no context to render")
+  void shouldRenderAPresenceCheckWithoutAContext() {
+    var filter = new PresentFilter(new AttributeFilter("a", null, "t", null));
+
+    assertEquals("t.a IS NOT NULL", filter.toClause());
+  }
 }
