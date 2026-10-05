@@ -13,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import org.antlr.v4.runtime.CharStreams;
@@ -998,6 +999,49 @@ class ScimEngineTest {
     void shouldRenderMixedOperatorsWithSqlPrecedence() {
       Filter result = engine.parseFilter("a eq 1 or b eq 2 and c eq 3", "t", null);
       assertEquals("t.a = :a1 OR t.b = :b1 AND t.c = :c1", result.toClause());
+    }
+  }
+
+  @Nested
+  @DisplayName("Parameter Keys")
+  class ParameterKeyTests {
+
+    @Test
+    @DisplayName("An aliased attribute and an underscore attribute keep separate parameters")
+    void shouldKeepSeparateParametersForNamesThatFlattenAlike() {
+      Filter result = engine.parseFilter("u.name eq \"alice\" and u_name eq \"bob\"", "t", null);
+
+      assertEquals("u.name = :u_name1 AND t.u_name = :u_name2", result.toClause());
+      assertEquals(Map.of("u_name1", "alice", "u_name2", "bob"), result.context().indexedParams());
+    }
+
+    @Test
+    @DisplayName("List checks on names that flatten alike keep separate parameters")
+    void shouldKeepSeparateListParametersForNamesThatFlattenAlike() {
+      Filter result = engine.parseFilter("u.id in [1, 2] and u_id in [3]", "t", null);
+
+      assertEquals("u.id IN (:u_id1, :u_id2) AND t.u_id IN (:u_id3)", result.toClause());
+      assertEquals(Map.of("u_id1", 1L, "u_id2", 2L, "u_id3", 3L), result.context().indexedParams());
+    }
+
+    @Test
+    @DisplayName(
+        "A comparison and a list check on names that flatten alike keep separate parameters")
+    void shouldKeepSeparateParametersAcrossComparisonsAndListChecks() {
+      Filter result = engine.parseFilter("u_id eq 9 and u.id in [1, 2]", "t", null);
+
+      assertEquals("t.u_id = :u_id1 AND u.id IN (:u_id2, :u_id3)", result.toClause());
+      assertEquals(Map.of("u_id1", 9L, "u_id2", 1L, "u_id3", 2L), result.context().indexedParams());
+    }
+
+    @Test
+    @DisplayName("Repeated use of one attribute still counts from one")
+    void shouldCountRepeatedUseOfOneAttributeFromOne() {
+      Filter result = engine.parseFilter("name eq \"a\" or name eq \"b\" or age gt 1", "t", null);
+
+      assertEquals("t.name = :name1 OR t.name = :name2 OR t.age > :age1", result.toClause());
+      assertEquals(
+          Map.of("name", List.of("a", "b"), "age", List.of(1L)), result.context().params());
     }
   }
 

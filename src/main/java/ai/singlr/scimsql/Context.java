@@ -17,11 +17,13 @@ public class Context {
   private final Map<String, List<Object>> params;
   private final Map<String, Object> indexedParams;
   private final Set<String> attributes;
+  private final Map<String, Integer> keyCounts;
 
   public Context() {
     this.params = new HashMap<>();
     this.indexedParams = new HashMap<>();
     this.attributes = new HashSet<>();
+    this.keyCounts = new HashMap<>();
   }
 
   /**
@@ -41,7 +43,7 @@ public class Context {
     List<Object> values = params.computeIfAbsent(key, k -> new ArrayList<>());
     values.add(rawValue);
 
-    var indexedKey = key.replace(".", "_") + values.size();
+    var indexedKey = nextIndexedKey(key);
     indexedParams.put(indexedKey, rawValue);
 
     return keyMapper.apply(indexedKey);
@@ -66,7 +68,7 @@ public class Context {
 
       values.add(rawValue);
 
-      var indexedKey = key.replace(".", "_") + values.size();
+      var indexedKey = nextIndexedKey(key);
       indexedParams.put(indexedKey, rawValue);
 
       var paramKey = keyMapper.apply(indexedKey);
@@ -81,6 +83,15 @@ public class Context {
     }
 
     return builder.toString();
+  }
+
+  /**
+   * A parameter key is the attribute path with its dot flattened to an underscore, plus a counter.
+   * The counter runs per flattened name, so {@code u.name} and {@code u_name} never share a key.
+   */
+  private String nextIndexedKey(String attributeKey) {
+    var flattened = attributeKey.replace(".", "_");
+    return flattened + keyCounts.merge(flattened, 1, Integer::sum);
   }
 
   /**
