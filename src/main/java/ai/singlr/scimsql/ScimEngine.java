@@ -32,8 +32,8 @@ public class ScimEngine {
    * @param compareFilterBuilder customises how comparisons render, or {@code null} for the default
    * @return the parsed filter
    * @throws FilterSyntaxException if the expression is not one complete filter, holds a whole
-   *     number that does not fit, or exceeds a limit: 50 levels of parentheses, 500 logical
-   *     operators, or 10 segments in an attribute path
+   *     number that does not fit, names an attribute path deeper than {@code alias.attribute}, or
+   *     exceeds a limit: 50 levels of parentheses or 500 logical operators
    * @throws IllegalArgumentException if the expression or the prefix is missing; that is a mistake
    *     in the calling code, never in a client's filter
    */

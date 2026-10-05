@@ -159,7 +159,7 @@ class ScimEngineTest {
     void shouldHandleComplexNestedOperators() {
       Filter result =
           engine.parseFilter(
-              "emails.work.value co \"@example.com\" and (age gt 25 or active eq true)", "t", null);
+              "emails.value co \"@example.com\" and (age gt 25 or active eq true)", "t", null);
       result.toClause();
       var map = result.context().params();
       assertEquals(3, map.size());
@@ -834,27 +834,47 @@ class ScimEngineTest {
       assertTrue(ex.getMessage().endsWith("more than 500 logical operators"), ex.getMessage());
     }
 
-    @Test
-    @DisplayName("Attribute path up to the limit")
-    void shouldAcceptAnAttributePathUpToTheLimit() {
-      var filter = "a" + ".b".repeat(9) + " pr";
-      assertNotNull(engine.parseFilter(filter, "t", null).toClause());
+    @ParameterizedTest(name = "rejects [{0}]")
+    @ValueSource(
+        strings = {
+          "emails.work.value co \"x\"",
+          "a.b.c pr",
+          "a.b.c.d eq 1",
+          "u.name.x in [1, 2]",
+          "name pr and a.b.c pr",
+          "a..b pr",
+          "a. pr",
+          "a.b. pr"
+        })
+    @DisplayName("An attribute path deeper than alias.attribute")
+    void shouldRejectAnAttributePathDeeperThanAliasAndAttribute(String filter) {
+      assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(filter, "t", null));
     }
 
     @Test
-    @DisplayName("Attribute path past the limit")
-    void shouldRejectAnAttributePathPastTheLimit() {
-      var filter = "a" + ".b".repeat(10) + " pr";
+    @DisplayName("The error points at the segment that is not supported")
+    void shouldPointAtTheUnsupportedPathSegment() {
+      var filter = "emails.work.value co \"x\"";
       var ex =
           assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(filter, "t", null));
-      assertTrue(
-          ex.getMessage().endsWith("attribute path longer than 10 segments"), ex.getMessage());
+      assertEquals(
+          "Failed to parse filter: Invalid filter syntax at position "
+              + "emails.work".length()
+              + ": attribute path deeper than alias.attribute",
+          ex.getMessage());
     }
 
     @Test
-    @DisplayName("Attribute paths do not add up across the filter")
-    void shouldCountPathSegmentsPerAttribute() {
-      var filter = "a.b.c pr" + " and a.b.c pr".repeat(50);
+    @DisplayName("An aliased attribute is kept whole")
+    void shouldKeepAnAliasedAttributeWhole() {
+      Filter result = engine.parseFilter("u.userName eq \"john\" and active pr", "t", null);
+      assertEquals("u.user_name = :u_userName1 AND t.active IS NOT NULL", result.toClause());
+    }
+
+    @Test
+    @DisplayName("Aliased attributes do not add up across the filter")
+    void shouldAcceptManyAliasedAttributes() {
+      var filter = "a.b pr" + " and a.b pr".repeat(50);
       assertNotNull(engine.parseFilter(filter, "t", null).toClause());
     }
 
