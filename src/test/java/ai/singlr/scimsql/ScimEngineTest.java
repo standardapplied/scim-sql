@@ -11,6 +11,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.List;
+import java.util.Random;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -773,6 +775,192 @@ class ScimEngineTest {
     void shouldRenderMixedOperatorsWithSqlPrecedence() {
       Filter result = engine.parseFilter("a eq 1 or b eq 2 and c eq 3", "t", null);
       assertEquals("t.a = :a1 OR t.b = :b1 AND t.c = :c1", result.toClause());
+    }
+  }
+
+  @Nested
+  @DisplayName("Scope Filter")
+  class ScopeFilterTests {
+
+    private static final String OWNER = "ownerId eq \"#59b47990-39d1-46c7-ac88-0808abd49a94\"";
+
+    @Test
+    @DisplayName("A filter with or stays inside the scope")
+    void shouldKeepAnOrFilterInsideTheScope() {
+      var scoped = engine.scopeFilter(OWNER, "status eq \"open\" or status pr");
+      assertEquals("(" + OWNER + ") and (status eq \"open\" or status pr)", scoped);
+
+      Filter result = engine.parseFilter(scoped, "t", null);
+      assertEquals(
+          "(t.owner_id = CAST(:ownerId1 AS UUID)) AND (t.status = :status1 OR t.status IS NOT NULL)",
+          result.toClause());
+    }
+
+    @Test
+    @DisplayName("A filter naming the scope attribute cannot widen the scope")
+    void shouldKeepAFilterOnTheScopeAttributeInsideTheScope() {
+      var scoped =
+          engine.scopeFilter(
+              OWNER, "ownerId eq \"#00000000-0000-0000-0000-000000000002\" or status pr");
+
+      Filter result = engine.parseFilter(scoped, "t", null);
+      assertEquals(
+          "(t.owner_id = CAST(:ownerId1 AS UUID))"
+              + " AND (t.owner_id = CAST(:ownerId2 AS UUID) OR t.status IS NOT NULL)",
+          result.toClause());
+    }
+
+    @Test
+    @DisplayName("A scope with or stays grouped")
+    void shouldKeepAScopeWithOrGrouped() {
+      var scoped = engine.scopeFilter("a eq 1 or b eq 2", "c eq 3");
+
+      Filter result = engine.parseFilter(scoped, "t", null);
+      assertEquals("(t.a = :a1 OR t.b = :b1) AND (t.c = :c1)", result.toClause());
+    }
+
+    @Test
+    @DisplayName("A negated filter stays inside the scope")
+    void shouldKeepANegatedFilterInsideTheScope() {
+      var scoped = engine.scopeFilter(OWNER, "not (status eq \"open\")");
+
+      Filter result = engine.parseFilter(scoped, "t", null);
+      assertEquals(
+          "(t.owner_id = CAST(:ownerId1 AS UUID)) AND (NOT (t.status = :status1))",
+          result.toClause());
+    }
+
+    @Test
+    @DisplayName("Scopes nest")
+    void shouldNestScopes() {
+      var scoped = engine.scopeFilter(OWNER, engine.scopeFilter("active eq true", "age gt 21"));
+
+      Filter result = engine.parseFilter(scoped, "t", null);
+      assertEquals(
+          "(t.owner_id = CAST(:ownerId1 AS UUID)) AND ((t.active = :active1) AND (t.age > :age1))",
+          result.toClause());
+    }
+
+    @ParameterizedTest(name = "returns the scope alone for [{0}]")
+    @ValueSource(strings = {"", "   ", "\t\n"})
+    @DisplayName("No filter")
+    void shouldReturnTheScopeAloneWhenThereIsNoFilter(String filter) {
+      assertEquals(OWNER, engine.scopeFilter(OWNER, filter));
+    }
+
+    @Test
+    @DisplayName("Null filter")
+    void shouldReturnTheScopeAloneForANullFilter() {
+      assertEquals(OWNER, engine.scopeFilter(OWNER, null));
+    }
+
+    @Test
+    @DisplayName("Surrounding whitespace is dropped from both parts")
+    void shouldDropSurroundingWhitespace() {
+      assertEquals(
+          "(" + OWNER + ") and (status pr)",
+          engine.scopeFilter("  " + OWNER + " ", " status pr\n"));
+      assertEquals(OWNER, engine.scopeFilter(" " + OWNER + "  ", null));
+    }
+
+    @ParameterizedTest(name = "rejects [{0}]")
+    @ValueSource(
+        strings = {
+          "status eq \"open\") or (status pr",
+          "status pr) or (status pr",
+          "status pr) or ownerId pr or (status pr",
+          "status eq \"open\" or",
+          "status eq \"open\";",
+          "status eq \"open",
+          "(status pr"
+        })
+    @DisplayName("A filter that is not one complete filter")
+    void shouldRejectAFilterThatIsNotOneCompleteFilter(String filter) {
+      assertThrows(IllegalArgumentException.class, () -> engine.scopeFilter(OWNER, filter));
+    }
+
+    @ParameterizedTest(name = "rejects scope [{0}]")
+    @ValueSource(strings = {"", "  ", "ownerId eq", "ownerId pr) or (ownerId pr"})
+    @DisplayName("A scope that is missing or not one complete filter")
+    void shouldRejectAScopeThatIsMissingOrIncomplete(String scope) {
+      assertThrows(IllegalArgumentException.class, () -> engine.scopeFilter(scope, "status pr"));
+    }
+
+    @Test
+    @DisplayName("Null scope")
+    void shouldRejectANullScope() {
+      var ex =
+          assertThrows(IllegalArgumentException.class, () -> engine.scopeFilter(null, "status pr"));
+      assertEquals("Scope filter must be specified", ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("A missing scope is rejected even without a filter")
+    void shouldRejectAMissingScopeEvenWithoutAFilter() {
+      assertThrows(IllegalArgumentException.class, () -> engine.scopeFilter(" ", null));
+    }
+
+    @Test
+    @DisplayName("No generated filter leaves the scope")
+    void shouldNeverLetAGeneratedFilterLeaveTheScope() {
+      var fragments =
+          List.of(
+              "status pr",
+              "status eq \"open\"",
+              "ownerId eq \"#00000000-0000-0000-0000-000000000002\"",
+              "age gt 21",
+              "id in [1, 2]",
+              " or ",
+              " and ",
+              "not ",
+              "(",
+              ")",
+              " ",
+              "\"",
+              "\\",
+              ";",
+              "'",
+              "--",
+              "[",
+              "]",
+              ",",
+              "pr",
+              "eq",
+              "status",
+              "1",
+              "\t");
+      var random = new Random(20261005L);
+      var accepted = 0;
+      var rejected = 0;
+
+      for (var i = 0; i < 20_000; i++) {
+        var filter = new StringBuilder();
+        var length = 1 + random.nextInt(7);
+        for (var j = 0; j < length; j++) {
+          filter.append(fragments.get(random.nextInt(fragments.size())));
+        }
+
+        String scoped;
+        try {
+          scoped = engine.scopeFilter(OWNER, filter.toString());
+        } catch (IllegalArgumentException ex) {
+          rejected++;
+          continue;
+        }
+        if (filter.toString().isBlank()) {
+          assertEquals(OWNER, scoped);
+          continue;
+        }
+        accepted++;
+
+        var root = assertInstanceOf(AndFilter.class, engine.parseFilter(scoped, "t", null), scoped);
+        var scope = assertInstanceOf(ParenFilter.class, root.left(), scoped);
+        assertEquals("(t.owner_id = CAST(:ownerId1 AS UUID))", scope.toClause(), scoped);
+        assertInstanceOf(ParenFilter.class, root.right(), scoped);
+      }
+
+      assertTrue(accepted > 500, "accepted " + accepted);
+      assertTrue(rejected > 500, "rejected " + rejected);
     }
   }
 }

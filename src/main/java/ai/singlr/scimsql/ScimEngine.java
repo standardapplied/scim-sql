@@ -52,6 +52,33 @@ public class ScimEngine {
     return new ScimEvaluator(prefix, compareFilterBuilder).visit(tree.query());
   }
 
+  /**
+   * Restricts a filter to a scope that must always hold and returns the combined filter expression.
+   *
+   * <p>Use this to combine a condition the server enforces (an owner, a tenant, a visibility rule)
+   * with a filter supplied by a client. Each part is checked to be one complete filter on its own
+   * and is then wrapped in parentheses, so the client's part can never widen the scope, whatever
+   * operators or attributes it uses. Do not join filter text by hand.
+   *
+   * @param scope the filter that must always hold
+   * @param filter the filter to apply within the scope; when {@code null} or blank the scope is
+   *     returned alone
+   * @return a filter expression equivalent to {@code (scope) and (filter)}
+   * @throws IllegalArgumentException if the scope is missing, or either part is not a complete
+   *     filter
+   */
+  public String scopeFilter(String scope, String filter) {
+    if (scope == null || scope.isBlank()) {
+      throw new IllegalArgumentException("Scope filter must be specified");
+    }
+    parse(scope);
+    if (filter == null || filter.isBlank()) {
+      return scope.strip();
+    }
+    parse(filter);
+    return "(%s) and (%s)".formatted(scope.strip(), filter.strip());
+  }
+
   private static ScimParser.FilterContext parse(String filterExpression) {
     if (filterExpression == null || filterExpression.isBlank()) {
       throw new IllegalArgumentException("Filter must be specified");

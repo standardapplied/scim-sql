@@ -65,6 +65,39 @@ engine.parseFilter("(a eq 1 or b eq 2) and c eq 3", "p", null).toClause();
 // → "(a = :p_a1 OR b = :p_b1) AND c = :p_c1"
 ```
 
+`and` binds tighter than `or`, as in SQL. Use parentheses to group.
+
+## Strict Parsing
+
+`parseFilter` accepts one complete filter and nothing else. Input left over after a complete filter, and any character the grammar does not know, throws `IllegalArgumentException` naming the position of the first unexpected input. Nothing is skipped or ignored, so a typo can never silently widen a query. Leading and trailing whitespace is ignored.
+
+```java
+engine.parseFilter("status eq \"open\") or (status pr", "p", null);
+// → IllegalArgumentException: Failed to parse filter: Invalid filter syntax at position 16: ...
+
+engine.parseFilter("status eq \"open\";", "p", null);
+// → IllegalArgumentException: Failed to parse filter: Invalid filter syntax at position 16: ...
+```
+
+## Scoping a Client Filter
+
+When a query must always be restricted by a condition the server controls (an owner, a tenant, a visibility rule) and a client may add its own filter, combine the two with `scopeFilter`:
+
+```java
+var scope = "ownerId eq \"#550e8400-e29b-41d4-a716-446655440000\"";
+var clientFilter = "status eq \"open\" or status pr";
+
+var scoped = engine.scopeFilter(scope, clientFilter);
+// → (ownerId eq "#550e8400-e29b-41d4-a716-446655440000") and (status eq "open" or status pr)
+
+engine.parseFilter(scoped, "p", null).toClause();
+// → "(p.owner_id = CAST(:ownerId1 AS UUID)) AND (p.status = :status1 OR p.status IS NOT NULL)"
+```
+
+Each part is checked to be one complete filter on its own and is then wrapped in parentheses, so the client's part cannot widen the scope, whatever operators or attributes it uses. A `null` or blank client filter returns the scope alone. A missing scope is an error.
+
+Do not join filter text by hand. `scope + " and " + clientFilter` renders as `owner AND status OR status`, and a client filter containing `or` then matches rows outside the scope.
+
 ## Typed Value Prefixes
 
 Values can carry type hints that produce SQL `CAST` expressions. Prefix the value inside the quotes:
