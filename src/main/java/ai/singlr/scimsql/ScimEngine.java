@@ -15,21 +15,6 @@ import org.antlr.v4.runtime.misc.ParseCancellationException;
 
 public class ScimEngine {
 
-  private static final BaseErrorListener FAIL_ON_SYNTAX_ERROR =
-      new BaseErrorListener() {
-        @Override
-        public void syntaxError(
-            Recognizer<?, ?> recognizer,
-            Object offendingSymbol,
-            int line,
-            int charPositionInLine,
-            String msg,
-            RecognitionException e) {
-          throw new ParseCancellationException(
-              "Invalid filter syntax at position " + charPositionInLine + ": " + msg);
-        }
-      };
-
   /**
    * Parses a SCIM filter expression into a {@link Filter} that renders a SQL clause with named
    * parameters.
@@ -83,18 +68,39 @@ public class ScimEngine {
     if (filterExpression == null || filterExpression.isBlank()) {
       throw new IllegalArgumentException("Filter must be specified");
     }
+    var leadingWhitespace = filterExpression.length() - filterExpression.stripLeading().length();
+    var failOnSyntaxError = failOnSyntaxError(leadingWhitespace);
     try {
       var lexer = new ScimLexer(CharStreams.fromString(filterExpression.strip()));
       lexer.removeErrorListeners();
-      lexer.addErrorListener(FAIL_ON_SYNTAX_ERROR);
+      lexer.addErrorListener(failOnSyntaxError);
 
       var parser = new ScimParser(new CommonTokenStream(lexer));
       parser.removeErrorListeners();
-      parser.addErrorListener(FAIL_ON_SYNTAX_ERROR);
+      parser.addErrorListener(failOnSyntaxError);
 
       return parser.filter();
     } catch (ParseCancellationException e) {
       throw new IllegalArgumentException("Failed to parse filter: " + e.getMessage(), e);
     }
+  }
+
+  private static BaseErrorListener failOnSyntaxError(int positionOffset) {
+    return new BaseErrorListener() {
+      @Override
+      public void syntaxError(
+          Recognizer<?, ?> recognizer,
+          Object offendingSymbol,
+          int line,
+          int charPositionInLine,
+          String msg,
+          RecognitionException e) {
+        throw new ParseCancellationException(
+            "Invalid filter syntax at position "
+                + (positionOffset + charPositionInLine)
+                + ": "
+                + msg);
+      }
+    };
   }
 }

@@ -740,6 +740,16 @@ class ScimEngineTest {
     }
 
     @Test
+    @DisplayName("Error position counts leading whitespace")
+    void shouldReportThePositionInTheOriginalInput() {
+      var ex =
+          assertThrows(
+              IllegalArgumentException.class,
+              () -> engine.parseFilter("  userName eq \"john\";", "t", null));
+      assertTrue(ex.getMessage().contains("position 20"), ex.getMessage());
+    }
+
+    @Test
     @DisplayName("Null filter")
     void shouldRejectNullFilter() {
       var ex =
