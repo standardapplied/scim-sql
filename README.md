@@ -71,6 +71,8 @@ engine.parseFilter("(a eq 1 or b eq 2) and c eq 3", "p", null).toClause();
 
 `parseFilter` accepts one complete filter and nothing else. Input left over after a complete filter, and any character the grammar does not know, throws `FilterSyntaxException` (an `IllegalArgumentException`) naming the position of the first unexpected input. Catch that type to answer a client with a client error. Nothing is skipped or ignored, so a typo can never silently widen a query. Leading and trailing whitespace is ignored.
 
+A missing filter (`null` or blank) or a missing prefix is a mistake in the calling code, not in a client's filter, and throws a plain `IllegalArgumentException`.
+
 ```java
 engine.parseFilter("status eq \"open\") or (status pr", "p", null);
 // → FilterSyntaxException: Failed to parse filter: Invalid filter syntax at position 16: ...
@@ -78,6 +80,16 @@ engine.parseFilter("status eq \"open\") or (status pr", "p", null);
 engine.parseFilter("status eq \"open\";", "p", null);
 // → FilterSyntaxException: Failed to parse filter: Invalid filter syntax at position 16: ...
 ```
+
+A filter is also rejected with `FilterSyntaxException` when it exceeds one of these limits, which keep a filter built for the purpose from exhausting the stack:
+
+| Limit | Value |
+|-------|-------|
+| Levels of nested parentheses | 50 |
+| Logical operators (`and`, `or`) | 500 |
+| Segments in one attribute path | 10 |
+
+A list of values (`in [...]`) is not limited. A whole number that does not fit in a `long` is rejected the same way.
 
 ## Scoping a Client Filter
 
@@ -95,6 +107,8 @@ engine.parseFilter(scoped, "p", null).toClause();
 ```
 
 Each part is checked to be one complete filter on its own and is then wrapped in parentheses, so the client's part cannot widen the scope, whatever operators or attributes it uses. A `null` or blank client filter returns the scope alone. A client filter that does not parse throws `FilterSyntaxException`. A missing or broken scope is a mistake in the calling code and throws a plain `IllegalArgumentException`.
+
+The result is itself a filter expression, so it fits wherever a single filter is expected, and whatever `scopeFilter` returns, `parseFilter` accepts.
 
 Do not join filter text by hand. `scope + " and " + clientFilter` renders as `owner AND status OR status`, and a client filter containing `or` then matches rows outside the scope.
 

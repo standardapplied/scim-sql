@@ -9,11 +9,15 @@ import java.util.function.Function;
 import org.antlr.v4.runtime.BaseErrorListener;
 import org.antlr.v4.runtime.CharStreams;
 import org.antlr.v4.runtime.CommonTokenStream;
+import org.antlr.v4.runtime.LexerNoViableAltException;
 import org.antlr.v4.runtime.RecognitionException;
 import org.antlr.v4.runtime.Recognizer;
+import org.antlr.v4.runtime.Token;
 import org.antlr.v4.runtime.misc.ParseCancellationException;
 
 public class ScimEngine {
+
+  private static final String NO_PREFIX = "";
 
   /**
    * Parses a SCIM filter expression into a {@link Filter} that renders a SQL clause with named
@@ -27,14 +31,21 @@ public class ScimEngine {
    * @param prefix the table alias applied to attributes that do not carry their own
    * @param compareFilterBuilder customises how comparisons render, or {@code null} for the default
    * @return the parsed filter
-   * @throws FilterSyntaxException if the expression is missing or is not a complete filter
+   * @throws FilterSyntaxException if the expression is not one complete filter, holds a whole
+   *     number that does not fit, or exceeds a limit: 50 levels of parentheses, 500 logical
+   *     operators, or 10 segments in an attribute path
+   * @throws IllegalArgumentException if the expression or the prefix is missing; that is a mistake
+   *     in the calling code, never in a client's filter
    */
   public Filter parseFilter(
       String filterExpression,
       String prefix,
       Function<ComparisonFilter, ComparisonFilter> compareFilterBuilder) {
-    var tree = parse(filterExpression);
-    return new ScimEvaluator(prefix, compareFilterBuilder).visit(tree.query());
+    if (prefix == null) {
+      throw new IllegalArgumentException("Prefix must be specified");
+    }
+    requireSpecified(filterExpression, "Filter");
+    return parse(filterExpression, prefix, compareFilterBuilder);
   }
 
   /**
@@ -45,20 +56,22 @@ public class ScimEngine {
    * and is then wrapped in parentheses, so the client's part can never widen the scope, whatever
    * operators or attributes it uses. Do not join filter text by hand.
    *
+   * <p>The result is a filter expression, so it fits wherever a single filter is expected. Pass it
+   * to {@link #parseFilter} unchanged.
+   *
    * @param scope the filter that must always hold
    * @param filter the filter to apply within the scope; when {@code null} or blank the scope is
    *     returned alone
    * @return a filter expression equivalent to {@code (scope) and (filter)}
-   * @throws FilterSyntaxException if the filter is not a complete filter
+   * @throws FilterSyntaxException if the filter is not one complete filter that {@link
+   *     #parseFilter} accepts
    * @throws IllegalArgumentException if the scope is missing or is not a complete filter; a broken
    *     scope is a mistake in the calling code, never in the client's filter
    */
   public String scopeFilter(String scope, String filter) {
-    if (scope == null || scope.isBlank()) {
-      throw new IllegalArgumentException("Scope filter must be specified");
-    }
+    requireSpecified(scope, "Scope filter");
     try {
-      parse(scope);
+      parse(scope, NO_PREFIX, null);
     } catch (FilterSyntaxException e) {
       throw new IllegalArgumentException(
           "Scope filter is not a valid filter: " + e.getMessage(), e);
@@ -66,18 +79,31 @@ public class ScimEngine {
     if (filter == null || filter.isBlank()) {
       return scope.strip();
     }
-    parse(filter);
-    return "(%s) and (%s)".formatted(scope.strip(), filter.strip());
+    parse(filter, NO_PREFIX, null);
+    var scoped = "(%s) and (%s)".formatted(scope.strip(), filter.strip());
+    try {
+      parse(scoped, NO_PREFIX, null);
+    } catch (FilterSyntaxException e) {
+      throw new FilterSyntaxException(
+          "Failed to parse filter: exceeds a nesting or operator limit once scoped", e);
+    }
+    return scoped;
   }
 
-  private static ScimParser.FilterContext parse(String filterExpression) {
+  private static void requireSpecified(String filterExpression, String name) {
     if (filterExpression == null || filterExpression.isBlank()) {
-      throw new FilterSyntaxException("Filter must be specified");
+      throw new IllegalArgumentException(name + " must be specified");
     }
-    var leadingWhitespace = filterExpression.length() - filterExpression.stripLeading().length();
-    var failOnSyntaxError = failOnSyntaxError(leadingWhitespace);
+  }
+
+  private static Filter parse(
+      String filterExpression,
+      String prefix,
+      Function<ComparisonFilter, ComparisonFilter> compareFilterBuilder) {
+    var text = filterExpression.strip();
+    var failOnSyntaxError = failOnSyntaxError(text, filterExpression.indexOf(text));
     try {
-      var lexer = new ScimLexer(CharStreams.fromString(filterExpression.strip()));
+      var lexer = new BoundedScimLexer(CharStreams.fromString(text));
       lexer.removeErrorListeners();
       lexer.addErrorListener(failOnSyntaxError);
 
@@ -85,13 +111,17 @@ public class ScimEngine {
       parser.removeErrorListeners();
       parser.addErrorListener(failOnSyntaxError);
 
-      return parser.filter();
+      return new ScimEvaluator(prefix, compareFilterBuilder).visit(parser.filter());
     } catch (ParseCancellationException e) {
       throw new FilterSyntaxException("Failed to parse filter: " + e.getMessage(), e);
     }
   }
 
-  private static BaseErrorListener failOnSyntaxError(int positionOffset) {
+  /**
+   * ANTLR reports a column that restarts after every line break and counts code points. The
+   * listener reports the index into the expression the caller passed instead.
+   */
+  private static BaseErrorListener failOnSyntaxError(String text, int offset) {
     return new BaseErrorListener() {
       @Override
       public void syntaxError(
@@ -101,11 +131,13 @@ public class ScimEngine {
           int charPositionInLine,
           String msg,
           RecognitionException e) {
+        var codePointIndex =
+            e instanceof LexerNoViableAltException lexerError
+                ? lexerError.getStartIndex()
+                : ((Token) offendingSymbol).getStartIndex();
+        var position = offset + text.offsetByCodePoints(0, codePointIndex);
         throw new ParseCancellationException(
-            "Invalid filter syntax at position "
-                + (positionOffset + charPositionInLine)
-                + ": "
-                + msg);
+            "Invalid filter syntax at position " + position + ": " + msg);
       }
     };
   }

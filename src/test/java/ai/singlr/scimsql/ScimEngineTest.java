@@ -13,6 +13,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
 import java.util.Random;
+import org.antlr.v4.runtime.CharStreams;
+import org.antlr.v4.runtime.CommonTokenStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -741,21 +743,189 @@ class ScimEngineTest {
 
     @ParameterizedTest(name = "is a syntax error [{0}]")
     @ValueSource(
-        strings = {
-          "userName eq",
-          "userName eq \"john\") or (active pr",
-          "userName eq \"john\";",
-          "   "
-        })
+        strings = {"userName eq", "userName eq \"john\") or (active pr", "userName eq \"john\";"})
     @DisplayName("A filter that does not parse is a FilterSyntaxException")
     void shouldThrowFilterSyntaxExceptionForAFilterThatDoesNotParse(String filter) {
       assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(filter, "t", null));
     }
 
+    @ParameterizedTest(name = "is out of range [{0}]")
+    @ValueSource(
+        strings = {
+          "age gt 99999999999999999999",
+          "age gt -99999999999999999999",
+          "id in [1, 99999999999999999999]",
+          "age gt 1E-2",
+          "age gt 1E+30"
+        })
+    @DisplayName("A whole number that does not fit is a FilterSyntaxException")
+    void shouldThrowFilterSyntaxExceptionForAWholeNumberThatDoesNotFit(String filter) {
+      var ex =
+          assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(filter, "t", null));
+      assertTrue(ex.getMessage().startsWith("Failed to parse filter: "), ex.getMessage());
+    }
+
     @Test
-    @DisplayName("A null filter is a FilterSyntaxException")
-    void shouldThrowFilterSyntaxExceptionForANullFilter() {
-      assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(null, "t", null));
+    @DisplayName("A whole number written with an exponent")
+    void shouldHandleAWholeNumberWithAnExponent() {
+      Filter result = engine.parseFilter("age gt 1E+5", "t", null);
+      assertEquals("t.age > :age1", result.toClause());
+      assertEquals(100_000L, result.context().indexedParams().get("age1"));
+    }
+
+    @Test
+    @DisplayName("Parentheses nested to the limit")
+    void shouldAcceptParenthesesNestedToTheLimit() {
+      var filter = "(".repeat(50) + "active pr" + ")".repeat(50);
+      Filter result = engine.parseFilter(filter, "t", null);
+      assertEquals("(".repeat(50) + "t.active IS NOT NULL" + ")".repeat(50), result.toClause());
+    }
+
+    @Test
+    @DisplayName("Parentheses nested past the limit")
+    void shouldRejectParenthesesNestedPastTheLimit() {
+      var filter = "(".repeat(51) + "active pr" + ")".repeat(51);
+      var ex =
+          assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(filter, "t", null));
+      assertEquals(
+          "Failed to parse filter: Invalid filter syntax at position 50:"
+              + " nested deeper than 50 levels",
+          ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("Negations count as nesting")
+    void shouldCountNegationsAsNesting() {
+      var filter = "not (".repeat(51) + "active pr" + ")".repeat(51);
+      assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(filter, "t", null));
+    }
+
+    @Test
+    @DisplayName("Parentheses that close do not add up")
+    void shouldNotCountClosedParenthesesAsNesting() {
+      var filter = "(active pr)" + " and (active pr)".repeat(200);
+      assertNotNull(engine.parseFilter(filter, "t", null).toClause());
+    }
+
+    @Test
+    @DisplayName("Parentheses inside a string value are not nesting")
+    void shouldNotCountParenthesesInsideAStringAsNesting() {
+      var filter = "name eq \"" + "(".repeat(500) + "\"";
+      Filter result = engine.parseFilter(filter, "t", null);
+      assertEquals("t.name = :name1", result.toClause());
+      assertEquals("(".repeat(500), result.context().indexedParams().get("name1"));
+    }
+
+    @Test
+    @DisplayName("Logical operators up to the limit")
+    void shouldAcceptLogicalOperatorsUpToTheLimit() {
+      var filter = "active pr" + " and active pr".repeat(500);
+      assertNotNull(engine.parseFilter(filter, "t", null).toClause());
+    }
+
+    @Test
+    @DisplayName("Logical operators past the limit")
+    void shouldRejectLogicalOperatorsPastTheLimit() {
+      var filter = "active pr" + " or active pr".repeat(501);
+      var ex =
+          assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(filter, "t", null));
+      assertTrue(ex.getMessage().endsWith("more than 500 logical operators"), ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("Attribute path up to the limit")
+    void shouldAcceptAnAttributePathUpToTheLimit() {
+      var filter = "a" + ".b".repeat(9) + " pr";
+      assertNotNull(engine.parseFilter(filter, "t", null).toClause());
+    }
+
+    @Test
+    @DisplayName("Attribute path past the limit")
+    void shouldRejectAnAttributePathPastTheLimit() {
+      var filter = "a" + ".b".repeat(10) + " pr";
+      var ex =
+          assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(filter, "t", null));
+      assertTrue(
+          ex.getMessage().endsWith("attribute path longer than 10 segments"), ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("Attribute paths do not add up across the filter")
+    void shouldCountPathSegmentsPerAttribute() {
+      var filter = "a.b.c pr" + " and a.b.c pr".repeat(50);
+      assertNotNull(engine.parseFilter(filter, "t", null).toClause());
+    }
+
+    @ParameterizedTest(name = "rejects without overflowing the stack [{0}]")
+    @ValueSource(strings = {"(", "not (", "a."})
+    @DisplayName("Input built to exhaust the stack is rejected")
+    void shouldRejectInputBuiltToExhaustTheStack(String unit) {
+      var filter = unit.repeat(200_000) + "a pr";
+      assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(filter, "t", null));
+    }
+
+    @Test
+    @DisplayName("A chain built to exhaust the stack is rejected")
+    void shouldRejectAChainBuiltToExhaustTheStack() {
+      var filter = "active pr" + " and active pr".repeat(200_000);
+      assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(filter, "t", null));
+    }
+
+    @Test
+    @DisplayName("A long list of values is not limited")
+    void shouldAcceptALongListOfValues() {
+      var filter = "id in [" + "1, ".repeat(20_000) + "1]";
+      Filter result = engine.parseFilter(filter, "t", null);
+      assertNotNull(result.toClause());
+      assertEquals(20_001, result.context().indexedParams().size());
+    }
+
+    @Test
+    @DisplayName("Error position after a line break inside a string value")
+    void shouldReportThePositionAfterALineBreakInAString() {
+      var filter = "note eq \"line one\nline two\" and status eq";
+      var ex =
+          assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(filter, "t", null));
+      assertTrue(ex.getMessage().contains("position " + filter.length() + ":"), ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("Error position after characters outside the basic plane")
+    void shouldReportThePositionAfterSupplementaryCharacters() {
+      var filter = "  name eq \"\uD83D\uDE00\uD83D\uDE00\nb\";";
+      var ex =
+          assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(filter, "t", null));
+      assertTrue(
+          ex.getMessage().contains("position " + filter.indexOf(';') + ":"), ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("Error position of an unterminated string")
+    void shouldReportThePositionOfAnUnterminatedString() {
+      var filter = "name eq \"john";
+      var ex =
+          assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(filter, "t", null));
+      assertTrue(
+          ex.getMessage().contains("position " + filter.indexOf('"') + ":"), ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("The evaluator visits the entry rule")
+    void shouldEvaluateTheEntryRule() {
+      var parser =
+          new ScimParser(new CommonTokenStream(new ScimLexer(CharStreams.fromString("active pr"))));
+      Filter result = new ScimEvaluator("t", null).visit(parser.filter());
+      assertNotNull(result);
+      assertEquals("t.active IS NOT NULL", result.toClause());
+    }
+
+    @Test
+    @DisplayName("Null prefix")
+    void shouldRejectANullPrefixBeforeParsing() {
+      var ex =
+          assertThrows(
+              IllegalArgumentException.class, () -> engine.parseFilter("active pr)", null, null));
+      assertEquals("Prefix must be specified", ex.getMessage());
     }
 
     @Test
@@ -769,18 +939,20 @@ class ScimEngineTest {
     }
 
     @Test
-    @DisplayName("Null filter")
-    void shouldRejectNullFilter() {
+    @DisplayName("A null filter is the caller's error, not a filter syntax error")
+    void shouldBlameTheCallerForANullFilter() {
       var ex =
           assertThrows(IllegalArgumentException.class, () -> engine.parseFilter(null, "t", null));
+      assertEquals(IllegalArgumentException.class, ex.getClass());
       assertEquals("Filter must be specified", ex.getMessage());
     }
 
     @Test
-    @DisplayName("Blank filter")
-    void shouldRejectBlankFilter() {
+    @DisplayName("A blank filter is the caller's error, not a filter syntax error")
+    void shouldBlameTheCallerForABlankFilter() {
       var ex =
           assertThrows(IllegalArgumentException.class, () -> engine.parseFilter("   ", "t", null));
+      assertEquals(IllegalArgumentException.class, ex.getClass());
       assertEquals("Filter must be specified", ex.getMessage());
     }
 
@@ -924,6 +1096,36 @@ class ScimEngineTest {
     }
 
     @Test
+    @DisplayName("A filter with a whole number that does not fit is rejected up front")
+    void shouldRejectAFilterWithANumberThatDoesNotFit() {
+      assertThrows(
+          FilterSyntaxException.class,
+          () -> engine.scopeFilter(OWNER, "age gt 99999999999999999999"));
+    }
+
+    @Test
+    @DisplayName("A filter nested past the limit is rejected up front")
+    void shouldRejectAFilterNestedPastTheLimit() {
+      var filter = "(".repeat(51) + "active pr" + ")".repeat(51);
+      assertThrows(FilterSyntaxException.class, () -> engine.scopeFilter(OWNER, filter));
+    }
+
+    @Test
+    @DisplayName("A filter nested to the limit is rejected, because the scope adds a level")
+    void shouldRejectAFilterThatTheScopeWouldPushPastTheLimit() {
+      var filter = "(".repeat(50) + "active pr" + ")".repeat(50);
+      assertThrows(FilterSyntaxException.class, () -> engine.scopeFilter(OWNER, filter));
+    }
+
+    @Test
+    @DisplayName("Whatever scopeFilter accepts, parseFilter accepts")
+    void shouldOnlyReturnExpressionsThatParse() {
+      var filter = "(".repeat(49) + "active pr" + ")".repeat(49);
+      var scoped = engine.scopeFilter(OWNER, filter);
+      assertNotNull(engine.parseFilter(scoped, "t", null).toClause());
+    }
+
+    @Test
     @DisplayName("A scope that does not parse is the caller's error, not a filter syntax error")
     void shouldBlameTheCallerForAScopeThatDoesNotParse() {
       var ex =
@@ -957,6 +1159,7 @@ class ScimEngineTest {
               "status eq \"open\"",
               "ownerId eq \"#00000000-0000-0000-0000-000000000002\"",
               "age gt 21",
+              "age gt 99999999999999999999",
               "id in [1, 2]",
               " or ",
               " and ",

@@ -12,6 +12,18 @@ query
     | attrPath SP op=( 'eq' | 'ne' | 'gt' | 'lt' | 'ge' | 'le' | 'co' | 'sw' | 'ew' ) SP value       #compareExp
     ;
 
+LPAREN
+    : '('
+    ;
+
+RPAREN
+    : ')'
+    ;
+
+DOT
+    : '.'
+    ;
+
 NOT
     : 'not'
     ;

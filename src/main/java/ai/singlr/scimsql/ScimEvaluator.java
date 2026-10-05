@@ -5,6 +5,7 @@
 
 package ai.singlr.scimsql;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -25,6 +26,11 @@ public class ScimEvaluator extends ScimBaseVisitor<Filter> {
     this.compareFilterBuilder =
         compareFilterBuilder != null ? compareFilterBuilder : DEFAULT_COMPARE_FILTER_BUILDER;
     this.context = new Context();
+  }
+
+  @Override
+  public Filter visitFilter(ScimParser.FilterContext ctx) {
+    return visit(ctx.query());
   }
 
   @Override
@@ -105,7 +111,12 @@ public class ScimEvaluator extends ScimBaseVisitor<Filter> {
 
   @Override
   public Filter visitLong(ScimParser.LongContext ctx) {
-    return new ValueFilter(Long.parseLong(ctx.getText()), context);
+    try {
+      return new ValueFilter(new BigDecimal(ctx.getText()).longValueExact(), context);
+    } catch (ArithmeticException e) {
+      throw new FilterSyntaxException(
+          "Failed to parse filter: not a whole number in range: " + ctx.getText(), e);
+    }
   }
 
   @Override
