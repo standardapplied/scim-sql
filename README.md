@@ -95,7 +95,6 @@ A filter is also rejected with `FilterSyntaxException` when it exceeds one of th
 |-------|-------|
 | Levels of nested parentheses | 50 |
 | Logical operators (`and`, `or`) | 500 |
-| Segments in one attribute path | 10 |
 
 A list of values (`in [...]`) is not limited. A whole number that does not fit in a `long` is rejected the same way.
 
@@ -119,6 +118,8 @@ Each part is checked to be one complete filter on its own and is then wrapped in
 The result is itself a filter expression, so it fits wherever a single filter is expected, and whatever `scopeFilter` returns, `parseFilter` accepts.
 
 Do not join filter text by hand. `scope + " and " + clientFilter` renders as `owner AND status OR status`, and a client filter containing `or` then matches rows outside the scope.
+
+The allowlist sees the scope's attributes too. Either check the client filter against its allowlist before scoping it, or include the scope's attributes when checking the scoped filter. A client that names a scope attribute can only narrow the result within the scope.
 
 ## Typed Value Prefixes
 
@@ -159,7 +160,7 @@ engine.parseFilter("u.userName eq \"john\" and active eq true", "p", null).toCla
 // → "u.user_name = :u_userName1 AND p.active = :active1"
 ```
 
-The dot becomes an underscore in the parameter key. Only `alias.attribute` is supported; see [Known Limitations](#known-limitations).
+The dot becomes an underscore in the parameter key. Only `alias.attribute` is supported. A deeper path such as `emails.work.value` is rejected with `FilterSyntaxException`.
 
 ## Parameter Binding
 
@@ -175,7 +176,12 @@ var params = filter.context().indexedParams();
 // params  = {name1=John, age1=21}
 ```
 
-Use `context().isValid(Set.of("name", "age"))` to allowlist which attributes callers are permitted to filter on. An attribute with its own alias is checked by its full path (`u.userName`). Call it after `toClause()`, and read [Known Limitations](#known-limitations) before relying on it alone.
+Use `context().isValid(Set.of("name", "age"))` to allowlist which attributes callers are permitted to filter on. Every attribute the filter uses must be listed, whether it appears in a comparison, a list check or a presence check (`pr`). An attribute with its own alias is listed by its full path (`u.userName`). The answer is the same before and after `toClause()`.
+
+```java
+engine.parseFilter("name eq \"John\" and secret pr", "p", null).context().isValid(Set.of("name"));
+// → false
+```
 
 ## Custom Filter Builders
 
@@ -193,9 +199,6 @@ This lets you intercept `ComparisonFilter` instances and return a subclass with 
 
 ## Known Limitations
 
-- **Attribute paths deeper than `alias.attribute`.** Segments after the second are ignored: `emails.work.value co "x"` renders as `LOWER(emails.work) LIKE …`. Do not rely on deeper paths.
-- **`Context.isValid` before rendering.** The context is filled by `toClause()`. Called earlier, `isValid` has nothing to check and returns `true`.
-- **`Context.isValid` and `pr`.** A presence check binds no parameter, so its attribute is not seen: `secret pr` passes an allowlist that does not contain `secret`. To allowlist strictly, also walk the filter tree and check every `PresentFilter`.
 - **`eq null` and `ne null`.** They render as `= :param` and `!= :param` with a null value, which SQL never matches. Use `pr` and `not (… pr)` to test for a value.
 
 ## PostgreSQL Query Analysis
