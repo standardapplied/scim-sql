@@ -1,5 +1,9 @@
 grammar Scim;
 
+filter
+    : query EOF
+    ;
+
 query
     : NOT? SP? '(' query ')'                                                                         #parenExp
     | query SP LOGICAL_OPERATOR SP query                                                             #logicalExp

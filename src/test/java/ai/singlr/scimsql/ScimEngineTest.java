@@ -15,6 +15,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 @DisplayName("SCIM Filter Evaluator")
 class ScimEngineTest {
@@ -670,6 +672,107 @@ class ScimEngineTest {
       Filter timestampString =
           engine.parseFilter("createdAt eq \"@2025-11-12T22:07:34Z\"", "t", null);
       assertEquals("t.created_at = CAST(:createdAt1 AS timestamptz)", timestampString.toClause());
+    }
+  }
+
+  @Nested
+  @DisplayName("Whole Input")
+  class WholeInputTests {
+
+    @ParameterizedTest(name = "rejects [{0}]")
+    @ValueSource(
+        strings = {
+          "userName eq \"john\") or (active pr",
+          "userName eq \"john\")",
+          "userName eq \"john\" or",
+          "userName eq \"john\" and ",
+          "userName eq \"john\" active pr",
+          "userName eq \"john\" extra",
+          "userName pr pr",
+          "userName eq \"john\"\"jane\"",
+          "(userName eq \"john\") (active pr)",
+          "userName eq \"john\" or active pr)"
+        })
+    @DisplayName("Input left after a complete filter")
+    void shouldRejectInputLeftAfterACompleteFilter(String filter) {
+      assertThrows(IllegalArgumentException.class, () -> engine.parseFilter(filter, "t", null));
+    }
+
+    @ParameterizedTest(name = "rejects [{0}]")
+    @ValueSource(
+        strings = {
+          "userName eq \"john\";",
+          "userName eq \"john\" -- comment",
+          "userName eq 'john'",
+          "userName eq \"john\"\tand active pr",
+          "userName eq \"john\"\nor active pr",
+          "userName eq \"john",
+          "userName = \"john\"",
+          "userName eq \"john\" && active pr",
+          "user*Name pr",
+          "userName eq \"john\" or active pr;"
+        })
+    @DisplayName("Characters outside the grammar")
+    void shouldRejectCharactersOutsideTheGrammar(String filter) {
+      assertThrows(IllegalArgumentException.class, () -> engine.parseFilter(filter, "t", null));
+    }
+
+    @Test
+    @DisplayName("Error names the position of the first unexpected input")
+    void shouldReportThePositionOfUnexpectedInput() {
+      var ex =
+          assertThrows(
+              IllegalArgumentException.class,
+              () -> engine.parseFilter("userName eq \"john\") or (active pr", "t", null));
+      assertTrue(ex.getMessage().contains("position 18"), ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("Error names the position of a character outside the grammar")
+    void shouldReportThePositionOfAnUnknownCharacter() {
+      var ex =
+          assertThrows(
+              IllegalArgumentException.class,
+              () -> engine.parseFilter("userName eq \"john\";", "t", null));
+      assertTrue(ex.getMessage().contains("position 18"), ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("Null filter")
+    void shouldRejectNullFilter() {
+      var ex =
+          assertThrows(IllegalArgumentException.class, () -> engine.parseFilter(null, "t", null));
+      assertEquals("Filter must be specified", ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("Blank filter")
+    void shouldRejectBlankFilter() {
+      var ex =
+          assertThrows(IllegalArgumentException.class, () -> engine.parseFilter("   ", "t", null));
+      assertEquals("Filter must be specified", ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("Surrounding whitespace is ignored")
+    void shouldIgnoreSurroundingWhitespace() {
+      Filter result = engine.parseFilter("  userName eq \"john\" \n", "t", null);
+      assertEquals("t.user_name = :userName1", result.toClause());
+    }
+
+    @Test
+    @DisplayName("Syntax inside a string value stays data")
+    void shouldKeepSyntaxInsideAStringAsData() {
+      Filter result = engine.parseFilter("name eq \"a) or (b; -- 'x'\"", "t", null);
+      assertEquals("t.name = :name1", result.toClause());
+      assertEquals("a) or (b; -- 'x'", result.context().indexedParams().get("name1"));
+    }
+
+    @Test
+    @DisplayName("and binds tighter than or, as in SQL")
+    void shouldRenderMixedOperatorsWithSqlPrecedence() {
+      Filter result = engine.parseFilter("a eq 1 or b eq 2 and c eq 3", "t", null);
+      assertEquals("t.a = :a1 OR t.b = :b1 AND t.c = :c1", result.toClause());
     }
   }
 }
