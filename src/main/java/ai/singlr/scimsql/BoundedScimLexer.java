@@ -9,19 +9,21 @@ import org.antlr.v4.runtime.CharStream;
 import org.antlr.v4.runtime.Token;
 
 /**
- * A lexer that rejects a filter before it grows past what the parser and the filter tree can
- * handle.
+ * A lexer that rejects a filter the parser and the evaluator cannot handle faithfully.
  *
- * <p>Parsing and evaluating a filter recurses once per level of parentheses, once per logical
- * operator and once per attribute path segment. Without a bound, a filter built for the purpose
- * exhausts the thread's stack. The limits are far above any filter written for a real query. A list
- * of values ({@code in [...]}) does not recurse and is not limited.
+ * <p>Parsing and evaluating a filter recurses once per level of parentheses and once per logical
+ * operator. Without a bound, a filter built for the purpose exhausts the thread's stack. The limits
+ * are far above any filter written for a real query. A list of values ({@code in [...]}) does not
+ * recurse and is not limited.
+ *
+ * <p>An attribute path is {@code alias.attribute} at most. That is all the evaluator uses, and a
+ * deeper path would otherwise be cut short without notice.
  */
 final class BoundedScimLexer extends ScimLexer {
 
   static final int MAX_NESTING_DEPTH = 50;
   static final int MAX_LOGICAL_OPERATORS = 500;
-  static final int MAX_PATH_SEGMENTS = 10;
+  static final int MAX_PATH_SEGMENTS = 2;
 
   private int nestingDepth;
   private int logicalOperators;
@@ -48,7 +50,7 @@ final class BoundedScimLexer extends ScimLexer {
       }
       case DOT -> {
         if (++pathSegments > MAX_PATH_SEGMENTS) {
-          reject(token, "attribute path longer than " + MAX_PATH_SEGMENTS + " segments");
+          reject(token, "attribute path deeper than alias.attribute");
         }
       }
       case ATTRNAME -> {}

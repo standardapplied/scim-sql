@@ -99,10 +99,12 @@ git checkout -b release/1.0.0
 
 ### 3. Set the release version
 
+Set the same version in the dependency snippet in `README.md` first, so the README never names an older release.
+
 ```bash
 mvn versions:set -DnewVersion=1.0.0
 mvn versions:commit
-git add pom.xml
+git add pom.xml README.md
 git commit -m "Release 1.0.0"
 ```
 

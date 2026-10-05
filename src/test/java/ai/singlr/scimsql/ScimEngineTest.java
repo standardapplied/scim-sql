@@ -6,13 +6,16 @@
 package ai.singlr.scimsql;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 import org.antlr.v4.runtime.CharStreams;
 import org.antlr.v4.runtime.CommonTokenStream;
 import org.junit.jupiter.api.BeforeEach;
@@ -157,7 +160,7 @@ class ScimEngineTest {
     void shouldHandleComplexNestedOperators() {
       Filter result =
           engine.parseFilter(
-              "emails.work.value co \"@example.com\" and (age gt 25 or active eq true)", "t", null);
+              "emails.value co \"@example.com\" and (age gt 25 or active eq true)", "t", null);
       result.toClause();
       var map = result.context().params();
       assertEquals(3, map.size());
@@ -832,27 +835,47 @@ class ScimEngineTest {
       assertTrue(ex.getMessage().endsWith("more than 500 logical operators"), ex.getMessage());
     }
 
-    @Test
-    @DisplayName("Attribute path up to the limit")
-    void shouldAcceptAnAttributePathUpToTheLimit() {
-      var filter = "a" + ".b".repeat(9) + " pr";
-      assertNotNull(engine.parseFilter(filter, "t", null).toClause());
+    @ParameterizedTest(name = "rejects [{0}]")
+    @ValueSource(
+        strings = {
+          "emails.work.value co \"x\"",
+          "a.b.c pr",
+          "a.b.c.d eq 1",
+          "u.name.x in [1, 2]",
+          "name pr and a.b.c pr",
+          "a..b pr",
+          "a. pr",
+          "a.b. pr"
+        })
+    @DisplayName("An attribute path deeper than alias.attribute")
+    void shouldRejectAnAttributePathDeeperThanAliasAndAttribute(String filter) {
+      assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(filter, "t", null));
     }
 
     @Test
-    @DisplayName("Attribute path past the limit")
-    void shouldRejectAnAttributePathPastTheLimit() {
-      var filter = "a" + ".b".repeat(10) + " pr";
+    @DisplayName("The error points at the segment that is not supported")
+    void shouldPointAtTheUnsupportedPathSegment() {
+      var filter = "emails.work.value co \"x\"";
       var ex =
           assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(filter, "t", null));
-      assertTrue(
-          ex.getMessage().endsWith("attribute path longer than 10 segments"), ex.getMessage());
+      assertEquals(
+          "Failed to parse filter: Invalid filter syntax at position "
+              + "emails.work".length()
+              + ": attribute path deeper than alias.attribute",
+          ex.getMessage());
     }
 
     @Test
-    @DisplayName("Attribute paths do not add up across the filter")
-    void shouldCountPathSegmentsPerAttribute() {
-      var filter = "a.b.c pr" + " and a.b.c pr".repeat(50);
+    @DisplayName("An aliased attribute is kept whole")
+    void shouldKeepAnAliasedAttributeWhole() {
+      Filter result = engine.parseFilter("u.userName eq \"john\" and active pr", "t", null);
+      assertEquals("u.user_name = :u_userName1 AND t.active IS NOT NULL", result.toClause());
+    }
+
+    @Test
+    @DisplayName("Aliased attributes do not add up across the filter")
+    void shouldAcceptManyAliasedAttributes() {
+      var filter = "a.b pr" + " and a.b pr".repeat(50);
       assertNotNull(engine.parseFilter(filter, "t", null).toClause());
     }
 
@@ -976,6 +999,173 @@ class ScimEngineTest {
     void shouldRenderMixedOperatorsWithSqlPrecedence() {
       Filter result = engine.parseFilter("a eq 1 or b eq 2 and c eq 3", "t", null);
       assertEquals("t.a = :a1 OR t.b = :b1 AND t.c = :c1", result.toClause());
+    }
+  }
+
+  @Nested
+  @DisplayName("Parameter Keys")
+  class ParameterKeyTests {
+
+    @Test
+    @DisplayName("An aliased attribute and an underscore attribute keep separate parameters")
+    void shouldKeepSeparateParametersForNamesThatFlattenAlike() {
+      Filter result = engine.parseFilter("u.name eq \"alice\" and u_name eq \"bob\"", "t", null);
+
+      assertEquals("u.name = :u_name1 AND t.u_name = :u_name2", result.toClause());
+      assertEquals(Map.of("u_name1", "alice", "u_name2", "bob"), result.context().indexedParams());
+    }
+
+    @Test
+    @DisplayName("List checks on names that flatten alike keep separate parameters")
+    void shouldKeepSeparateListParametersForNamesThatFlattenAlike() {
+      Filter result = engine.parseFilter("u.id in [1, 2] and u_id in [3]", "t", null);
+
+      assertEquals("u.id IN (:u_id1, :u_id2) AND t.u_id IN (:u_id3)", result.toClause());
+      assertEquals(Map.of("u_id1", 1L, "u_id2", 2L, "u_id3", 3L), result.context().indexedParams());
+    }
+
+    @Test
+    @DisplayName(
+        "A comparison and a list check on names that flatten alike keep separate parameters")
+    void shouldKeepSeparateParametersAcrossComparisonsAndListChecks() {
+      Filter result = engine.parseFilter("u_id eq 9 and u.id in [1, 2]", "t", null);
+
+      assertEquals("t.u_id = :u_id1 AND u.id IN (:u_id2, :u_id3)", result.toClause());
+      assertEquals(Map.of("u_id1", 9L, "u_id2", 1L, "u_id3", 2L), result.context().indexedParams());
+    }
+
+    @Test
+    @DisplayName("Repeated use of one attribute still counts from one")
+    void shouldCountRepeatedUseOfOneAttributeFromOne() {
+      Filter result = engine.parseFilter("name eq \"a\" or name eq \"b\" or age gt 1", "t", null);
+
+      assertEquals("t.name = :name1 OR t.name = :name2 OR t.age > :age1", result.toClause());
+      assertEquals(
+          Map.of("name", List.of("a", "b"), "age", List.of(1L)), result.context().params());
+    }
+  }
+
+  @Nested
+  @DisplayName("Allowlist")
+  class AllowlistTests {
+
+    @Test
+    @DisplayName("A presence check on an attribute outside the allowlist is invalid")
+    void shouldRejectAPresenceCheckOutsideTheAllowlist() {
+      Filter result = engine.parseFilter("secret pr", "t", null);
+      assertFalse(result.context().isValid(Set.of("name")));
+
+      result.toClause();
+      assertFalse(result.context().isValid(Set.of("name")));
+      assertTrue(result.context().isValid(Set.of("secret")));
+    }
+
+    @Test
+    @DisplayName("A presence check hidden among allowed comparisons is invalid")
+    void shouldRejectAPresenceCheckAmongAllowedComparisons() {
+      Filter result = engine.parseFilter("name eq \"John\" and secret pr and age gt 21", "t", null);
+      result.toClause();
+
+      assertFalse(result.context().isValid(Set.of("name", "age")));
+      assertTrue(result.context().isValid(Set.of("name", "age", "secret")));
+    }
+
+    @ParameterizedTest(name = "is invalid [{0}]")
+    @ValueSource(
+        strings = {
+          "not (secret pr)",
+          "name eq \"John\" or (age gt 21 and (secret pr))",
+          "not (name eq \"John\" and not (secret pr))"
+        })
+    @DisplayName("A presence check is seen wherever it is nested")
+    void shouldSeeAPresenceCheckWhereverItIsNested(String filter) {
+      Filter result = engine.parseFilter(filter, "t", null);
+      assertFalse(result.context().isValid(Set.of("name", "age")));
+    }
+
+    @Test
+    @DisplayName("The allowlist applies before the clause is rendered")
+    void shouldApplyTheAllowlistBeforeRendering() {
+      Filter result = engine.parseFilter("name eq \"John\" and age gt 21", "t", null);
+
+      assertFalse(result.context().isValid(Set.of("name")));
+      assertTrue(result.context().isValid(Set.of("name", "age")));
+    }
+
+    @Test
+    @DisplayName("The allowlist applies to a list check before the clause is rendered")
+    void shouldApplyTheAllowlistToAListCheckBeforeRendering() {
+      Filter result = engine.parseFilter("id in [1, 2]", "t", null);
+
+      assertFalse(result.context().isValid(Set.of("name")));
+      assertTrue(result.context().isValid(Set.of("id")));
+    }
+
+    @Test
+    @DisplayName("An aliased attribute is checked by its full path")
+    void shouldCheckAnAliasedAttributeByItsFullPath() {
+      Filter result = engine.parseFilter("u.userName pr and u.email eq \"a@b.c\"", "t", null);
+
+      assertFalse(result.context().isValid(Set.of("userName", "email")));
+      assertTrue(result.context().isValid(Set.of("u.userName", "u.email")));
+    }
+
+    @Test
+    @DisplayName("A custom comparison builder does not hide the attribute")
+    void shouldSeeTheAttributeThroughACustomComparisonBuilder() {
+      Filter result =
+          engine.parseFilter("tags eq \"admin\"", "t", ComparisonFilter.ListFilter::new);
+
+      assertFalse(result.context().isValid(Set.of("name")));
+      assertTrue(result.context().isValid(Set.of("tags")));
+    }
+
+    @Test
+    @DisplayName("Rendering does not change the verdict")
+    void shouldGiveTheSameVerdictBeforeAndAfterRendering() {
+      Filter result =
+          engine.parseFilter("name eq \"John\" and age gt 21 and id in [1, 2]", "t", null);
+      var before = result.context().isValid(Set.of("name", "age", "id"));
+      result.toClause();
+      result.toClause();
+
+      assertTrue(before);
+      assertTrue(result.context().isValid(Set.of("name", "age", "id")));
+      assertFalse(result.context().isValid(Set.of("name", "age")));
+    }
+
+    @Test
+    @DisplayName("A builder that renames the attribute is checked by the new name only")
+    void shouldCheckARenamedAttributeByItsNewName() {
+      Filter result =
+          engine.parseFilter(
+              "email eq \"a@b.c\"",
+              "t",
+              cf ->
+                  new ComparisonFilter(
+                      new AttributeFilter("emailAddress", null, "u", cf.context()),
+                      cf.operator(),
+                      cf.value(),
+                      cf.context()));
+
+      assertTrue(result.context().isValid(Set.of("emailAddress")));
+      assertFalse(result.context().isValid(Set.of("email")));
+      assertEquals("u.email_address = :emailAddress1", result.toClause());
+      assertTrue(result.context().isValid(Set.of("emailAddress")));
+    }
+
+    @Test
+    @DisplayName("A client filter can be checked on its own before it is scoped")
+    void shouldCheckAClientFilterBeforeScoping() {
+      var clientFilter = "name eq \"John\"";
+      var clientIsValid =
+          engine.parseFilter(clientFilter, "t", null).context().isValid(Set.of("name"));
+      var scoped = engine.scopeFilter("not (deletedAt pr)", clientFilter);
+
+      assertTrue(clientIsValid);
+      assertFalse(engine.parseFilter(scoped, "t", null).context().isValid(Set.of("name")));
+      assertTrue(
+          engine.parseFilter(scoped, "t", null).context().isValid(Set.of("name", "deletedAt")));
     }
   }
 
