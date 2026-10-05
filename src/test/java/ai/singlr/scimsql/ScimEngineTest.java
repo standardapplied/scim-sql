@@ -739,6 +739,25 @@ class ScimEngineTest {
       assertTrue(ex.getMessage().contains("position 18"), ex.getMessage());
     }
 
+    @ParameterizedTest(name = "is a syntax error [{0}]")
+    @ValueSource(
+        strings = {
+          "userName eq",
+          "userName eq \"john\") or (active pr",
+          "userName eq \"john\";",
+          "   "
+        })
+    @DisplayName("A filter that does not parse is a FilterSyntaxException")
+    void shouldThrowFilterSyntaxExceptionForAFilterThatDoesNotParse(String filter) {
+      assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(filter, "t", null));
+    }
+
+    @Test
+    @DisplayName("A null filter is a FilterSyntaxException")
+    void shouldThrowFilterSyntaxExceptionForANullFilter() {
+      assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(null, "t", null));
+    }
+
     @Test
     @DisplayName("Error position counts leading whitespace")
     void shouldReportThePositionInTheOriginalInput() {
@@ -894,6 +913,25 @@ class ScimEngineTest {
     @DisplayName("A scope that is missing or not one complete filter")
     void shouldRejectAScopeThatIsMissingOrIncomplete(String scope) {
       assertThrows(IllegalArgumentException.class, () -> engine.scopeFilter(scope, "status pr"));
+    }
+
+    @Test
+    @DisplayName("A filter that does not parse is a FilterSyntaxException")
+    void shouldThrowFilterSyntaxExceptionForAFilterThatDoesNotParse() {
+      assertThrows(
+          FilterSyntaxException.class,
+          () -> engine.scopeFilter(OWNER, "status eq \"open\") or (status pr"));
+    }
+
+    @Test
+    @DisplayName("A scope that does not parse is the caller's error, not a filter syntax error")
+    void shouldBlameTheCallerForAScopeThatDoesNotParse() {
+      var ex =
+          assertThrows(
+              IllegalArgumentException.class, () -> engine.scopeFilter("ownerId eq", "status pr"));
+      assertEquals(IllegalArgumentException.class, ex.getClass());
+      assertTrue(ex.getMessage().startsWith("Scope filter is not a valid filter"), ex.getMessage());
+      assertInstanceOf(FilterSyntaxException.class, ex.getCause());
     }
 
     @Test

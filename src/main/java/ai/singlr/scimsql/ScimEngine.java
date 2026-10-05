@@ -27,7 +27,7 @@ public class ScimEngine {
    * @param prefix the table alias applied to attributes that do not carry their own
    * @param compareFilterBuilder customises how comparisons render, or {@code null} for the default
    * @return the parsed filter
-   * @throws IllegalArgumentException if the expression is missing or is not a complete filter
+   * @throws FilterSyntaxException if the expression is missing or is not a complete filter
    */
   public Filter parseFilter(
       String filterExpression,
@@ -49,14 +49,20 @@ public class ScimEngine {
    * @param filter the filter to apply within the scope; when {@code null} or blank the scope is
    *     returned alone
    * @return a filter expression equivalent to {@code (scope) and (filter)}
-   * @throws IllegalArgumentException if the scope is missing, or either part is not a complete
-   *     filter
+   * @throws FilterSyntaxException if the filter is not a complete filter
+   * @throws IllegalArgumentException if the scope is missing or is not a complete filter; a broken
+   *     scope is a mistake in the calling code, never in the client's filter
    */
   public String scopeFilter(String scope, String filter) {
     if (scope == null || scope.isBlank()) {
       throw new IllegalArgumentException("Scope filter must be specified");
     }
-    parse(scope);
+    try {
+      parse(scope);
+    } catch (FilterSyntaxException e) {
+      throw new IllegalArgumentException(
+          "Scope filter is not a valid filter: " + e.getMessage(), e);
+    }
     if (filter == null || filter.isBlank()) {
       return scope.strip();
     }
@@ -66,7 +72,7 @@ public class ScimEngine {
 
   private static ScimParser.FilterContext parse(String filterExpression) {
     if (filterExpression == null || filterExpression.isBlank()) {
-      throw new IllegalArgumentException("Filter must be specified");
+      throw new FilterSyntaxException("Filter must be specified");
     }
     var leadingWhitespace = filterExpression.length() - filterExpression.stripLeading().length();
     var failOnSyntaxError = failOnSyntaxError(leadingWhitespace);
@@ -81,7 +87,7 @@ public class ScimEngine {
 
       return parser.filter();
     } catch (ParseCancellationException e) {
-      throw new IllegalArgumentException("Failed to parse filter: " + e.getMessage(), e);
+      throw new FilterSyntaxException("Failed to parse filter: " + e.getMessage(), e);
     }
   }
 

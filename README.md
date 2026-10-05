@@ -69,14 +69,14 @@ engine.parseFilter("(a eq 1 or b eq 2) and c eq 3", "p", null).toClause();
 
 ## Strict Parsing
 
-`parseFilter` accepts one complete filter and nothing else. Input left over after a complete filter, and any character the grammar does not know, throws `IllegalArgumentException` naming the position of the first unexpected input. Nothing is skipped or ignored, so a typo can never silently widen a query. Leading and trailing whitespace is ignored.
+`parseFilter` accepts one complete filter and nothing else. Input left over after a complete filter, and any character the grammar does not know, throws `FilterSyntaxException` (an `IllegalArgumentException`) naming the position of the first unexpected input. Catch that type to answer a client with a client error. Nothing is skipped or ignored, so a typo can never silently widen a query. Leading and trailing whitespace is ignored.
 
 ```java
 engine.parseFilter("status eq \"open\") or (status pr", "p", null);
-// → IllegalArgumentException: Failed to parse filter: Invalid filter syntax at position 16: ...
+// → FilterSyntaxException: Failed to parse filter: Invalid filter syntax at position 16: ...
 
 engine.parseFilter("status eq \"open\";", "p", null);
-// → IllegalArgumentException: Failed to parse filter: Invalid filter syntax at position 16: ...
+// → FilterSyntaxException: Failed to parse filter: Invalid filter syntax at position 16: ...
 ```
 
 ## Scoping a Client Filter
@@ -94,7 +94,7 @@ engine.parseFilter(scoped, "p", null).toClause();
 // → "(p.owner_id = CAST(:ownerId1 AS UUID)) AND (p.status = :status1 OR p.status IS NOT NULL)"
 ```
 
-Each part is checked to be one complete filter on its own and is then wrapped in parentheses, so the client's part cannot widen the scope, whatever operators or attributes it uses. A `null` or blank client filter returns the scope alone. A missing scope is an error.
+Each part is checked to be one complete filter on its own and is then wrapped in parentheses, so the client's part cannot widen the scope, whatever operators or attributes it uses. A `null` or blank client filter returns the scope alone. A client filter that does not parse throws `FilterSyntaxException`. A missing or broken scope is a mistake in the calling code and throws a plain `IllegalArgumentException`.
 
 Do not join filter text by hand. `scope + " and " + clientFilter` renders as `owner AND status OR status`, and a client filter containing `or` then matches rows outside the scope.
 
