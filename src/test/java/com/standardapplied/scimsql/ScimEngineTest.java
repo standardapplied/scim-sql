@@ -1,0 +1,1407 @@
+/*
+ * Copyright (c) 2026 Standard Applied Intelligence Labs
+ * SPDX-License-Identifier: MIT
+ */
+
+package com.standardapplied.scimsql;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
+import java.util.Set;
+import org.antlr.v4.runtime.CharStreams;
+import org.antlr.v4.runtime.CommonTokenStream;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+
+@DisplayName("SCIM Filter Evaluator")
+class ScimEngineTest {
+
+  private ScimEngine engine;
+
+  @BeforeEach
+  void setUp() {
+    engine = new ScimEngine();
+  }
+
+  @Nested
+  @DisplayName("Simple Comparison Tests")
+  class SimpleComparisonTests {
+
+    @Test
+    @DisplayName("Equal operator")
+    void shouldHandleEqualOperator() {
+      Filter result = engine.parseFilter("userName eq \"john.doe\"", "t", null);
+      assertEquals("t.user_name = :userName1", result.toClause());
+      var map = result.context().params();
+      assertEquals(1, map.size());
+    }
+
+    @Test
+    @DisplayName("Not equal operator")
+    void shouldHandleNotEqualOperator() {
+      Filter result = engine.parseFilter("userName ne \"john.doe\"", "t", null);
+      assertEquals("t.user_name != :userName1", result.toClause());
+    }
+
+    @Test
+    @DisplayName("Contains operator")
+    void shouldHandleContainsOperator() {
+      Filter result = engine.parseFilter("userName co \"john.doe\"", "t", null);
+      assertEquals("LOWER(t.user_name) LIKE '%' || LOWER(:userName1) || '%'", result.toClause());
+    }
+
+    @Test
+    @DisplayName("Starts with operator")
+    void shouldHandleStartsWithOperator() {
+      Filter result = engine.parseFilter("userName sw \"john.doe\"", "t", null);
+      assertEquals("LOWER(t.user_name) LIKE LOWER(:userName1) || '%'", result.toClause());
+    }
+
+    @Test
+    @DisplayName("Ends with operator")
+    void shouldHandleEndsWithOperator() {
+      Filter result = engine.parseFilter("userName ew \"john.doe\"", "t", null);
+      assertEquals("LOWER(t.user_name) LIKE '%' || LOWER(:userName1)", result.toClause());
+    }
+
+    @Test
+    @DisplayName("Greater than operator")
+    void shouldHandleGreaterThanOperator() {
+      Filter result = engine.parseFilter("age gt 25", "t", null);
+      assertEquals("t.age > :age1", result.toClause());
+    }
+
+    @Test
+    @DisplayName("Greater than or equal operator")
+    void shouldHandleGreaterThanOrEqualOperator() {
+      Filter result = engine.parseFilter("age ge 25", "t", null);
+      assertEquals("t.age >= :age1", result.toClause());
+    }
+
+    @Test
+    @DisplayName("Less than operator")
+    void shouldHandleLessThanOperator() {
+      Filter result = engine.parseFilter("age lt 25", "t", null);
+      assertEquals("t.age < :age1", result.toClause());
+    }
+
+    @Test
+    @DisplayName("Less than or equal operator")
+    void shouldHandleLessThanOrEqualOperator() {
+      Filter result = engine.parseFilter("age le 25", "t", null);
+      assertEquals("t.age <= :age1", result.toClause());
+    }
+
+    @Test
+    @DisplayName("Present operator")
+    void shouldHandlePresentOperator() {
+      Filter result = engine.parseFilter("userName pr", "t", null);
+      assertEquals("t.user_name IS NOT NULL", result.toClause());
+      assertNotNull(result.context());
+    }
+  }
+
+  @Nested
+  @DisplayName("Logical Operator Tests")
+  class LogicalOperatorTests {
+
+    @Test
+    @DisplayName("AND operator")
+    void shouldHandleAndOperator() {
+      Filter result = engine.parseFilter("userName eq \"john\" and active eq true", "t", null);
+      assertEquals("t.user_name = :userName1 AND t.active = :active1", result.toClause());
+    }
+
+    @Test
+    @DisplayName("OR operator")
+    void shouldHandleOrOperator() {
+      Filter result = engine.parseFilter("userName eq \"john\" or userName eq \"jane\"", "t", null);
+      assertEquals("t.user_name = :userName1 OR t.user_name = :userName2", result.toClause());
+    }
+
+    @Test
+    @DisplayName("NOT operator")
+    void shouldHandleNotOperator() {
+      Filter result = engine.parseFilter("not (active eq true)", "t", null);
+      assertEquals("NOT (t.active = :active1)", result.toClause());
+      assertNotNull(result.context());
+    }
+
+    @Test
+    @DisplayName("IN operator")
+    void shouldHandleInOperator() {
+      Filter result = engine.parseFilter("id in [1, 2, 3]", "t", null);
+      assertEquals("t.id IN (:id1, :id2, :id3)", result.toClause());
+      var map = result.context().indexedParams();
+      assertEquals(3, map.size());
+
+      result =
+          engine.parseFilter(
+              "id in [\"#59b47990-39d1-46c7-ac88-0808abd49a94\", \"#59b47990-39d1-46c7-ac88-0808abd49a95\"]",
+              "t",
+              null);
+      assertEquals("t.id IN (CAST(:id1 AS UUID), CAST(:id2 AS UUID))", result.toClause());
+    }
+
+    @Test
+    @DisplayName("Complex nested operators")
+    void shouldHandleComplexNestedOperators() {
+      Filter result =
+          engine.parseFilter(
+              "emails.value co \"@example.com\" and (age gt 25 or active eq true)", "t", null);
+      result.toClause();
+      var map = result.context().params();
+      assertEquals(3, map.size());
+
+      result =
+          engine.parseFilter(
+              "customQuery eq \"${\\\"request\\\":{\\\"parentId\\\":\\\"123sfasdfa\\\"}}\"",
+              "t",
+              null);
+      result.toClause();
+      map = result.context().params();
+      assertEquals(1, map.size());
+    }
+  }
+
+  @Nested
+  @DisplayName("Error Cases")
+  class ErrorTests {
+
+    @Test
+    @DisplayName("No filter")
+    void shouldThrowExceptionForNoFilter() {
+      assertThrows(IllegalArgumentException.class, () -> engine.parseFilter("", "t", null));
+    }
+
+    @Test
+    @DisplayName("Invalid operator")
+    void shouldThrowExceptionForInvalidOperator() {
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> engine.parseFilter("userName invalid \"john\"", "t", null));
+    }
+
+    @Test
+    @DisplayName("Missing value")
+    void shouldThrowExceptionForMissingValue() {
+      assertThrows(
+          IllegalArgumentException.class, () -> engine.parseFilter("userName eq", "t", null));
+    }
+
+    @Test
+    @DisplayName("Invalid attribute path")
+    void shouldThrowExceptionForInvalidAttributePath() {
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> engine.parseFilter(".userName eq \"john\"", "t", null));
+    }
+
+    @Test
+    @DisplayName("Unmatched parentheses")
+    void shouldThrowExceptionForUnmatchedParentheses() {
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> engine.parseFilter("(userName eq \"john\"", "t", null));
+    }
+
+    @Test
+    @DisplayName("Invalid value type")
+    void shouldThrowExceptionForInvalidValueType() {
+      assertThrows(
+          IllegalArgumentException.class, () -> engine.parseFilter("ageeq true", "t", null));
+    }
+  }
+
+  @Nested
+  @DisplayName("Special Cases")
+  class SpecialCasesTests {
+
+    @Test
+    @DisplayName("Multiple level parentheses")
+    void shouldHandleMultipleLevelParentheses() {
+      Filter result =
+          engine.parseFilter("not (active eq true and (age gt 25 or name co \"john\"))", "t", null);
+      assertEquals(
+          "NOT (t.active = :active1 AND (t.age > :age1 OR LOWER(t.name) LIKE '%' || LOWER(:name1) || '%'))",
+          result.toClause());
+    }
+
+    @Test
+    @DisplayName("Parenthesized expression exposes context")
+    void shouldExposeContextFromParenthesizedExpression() {
+      Filter result = engine.parseFilter("(userName eq \"john\")", "t", null);
+      assertEquals("(t.user_name = :userName1)", result.toClause());
+      assertNotNull(result.context());
+      assertEquals("john", result.context().indexedParams().get("userName1"));
+    }
+
+    @Test
+    @DisplayName("Null literal value")
+    void shouldHandleNullValue() {
+      Filter result = engine.parseFilter("deletedAt eq null", "t", null);
+      assertEquals("t.deleted_at = :deletedAt1", result.toClause());
+    }
+
+    @Test
+    @DisplayName("Double literal value")
+    void shouldHandleDoubleValue() {
+      Filter result = engine.parseFilter("score eq 3.14", "t", null);
+      assertEquals("t.score = :score1", result.toClause());
+      assertEquals(3.14, result.context().indexedParams().get("score1"));
+    }
+
+    @Test
+    @DisplayName("Negative integer value")
+    void shouldHandleNegativeInteger() {
+      Filter result = engine.parseFilter("balance eq -100", "t", null);
+      assertEquals("t.balance = :balance1", result.toClause());
+      assertEquals(-100L, result.context().indexedParams().get("balance1"));
+    }
+
+    @Test
+    @DisplayName("Negative double value")
+    void shouldHandleNegativeDouble() {
+      Filter result = engine.parseFilter("temperature eq -3.14", "t", null);
+      assertEquals("t.temperature = :temperature1", result.toClause());
+      assertEquals(-3.14, result.context().indexedParams().get("temperature1"));
+    }
+
+    @Test
+    @DisplayName("Double with scientific notation")
+    void shouldHandleDoubleScientificNotation() {
+      Filter result = engine.parseFilter("score eq 1.5E2", "t", null);
+      assertEquals("t.score = :score1", result.toClause());
+      assertEquals(150.0, result.context().indexedParams().get("score1"));
+    }
+
+    @Test
+    @DisplayName("Boolean false value")
+    void shouldHandleFalseBoolean() {
+      Filter result = engine.parseFilter("active eq false", "t", null);
+      assertEquals("t.active = :active1", result.toClause());
+      assertEquals(false, result.context().indexedParams().get("active1"));
+    }
+
+    @Test
+    @DisplayName("Custom compareFilterBuilder wraps as ListFilter")
+    void shouldUseCustomCompareFilterBuilder() {
+      Filter result = engine.parseFilter("name eq \"test\"", "t", ComparisonFilter.ListFilter::new);
+      assertInstanceOf(ComparisonFilter.ListFilter.class, result);
+      assertEquals("t.name = :name1", result.toClause());
+    }
+
+    @Test
+    @DisplayName("IN with string values")
+    void shouldHandleInWithStrings() {
+      Filter result = engine.parseFilter("status in [\"active\", \"pending\"]", "t", null);
+      assertEquals("t.status IN (:status1, :status2)", result.toClause());
+      assertEquals("active", result.context().indexedParams().get("status1"));
+      assertEquals("pending", result.context().indexedParams().get("status2"));
+    }
+  }
+
+  @Nested
+  @DisplayName("Explicit Alias Tests")
+  class ExplicitAliasTests {
+
+    @Test
+    @DisplayName("Explicit alias overrides default prefix")
+    void shouldUseExplicitAliasInsteadOfDefaultPrefix() {
+      Filter result =
+          engine.parseFilter("eh.userId eq \"#123e4567-e89b-12d3-a456-426614174000\"", "t", null);
+      assertEquals("eh.user_id = CAST(:eh_userId1 AS UUID)", result.toClause());
+      var map = result.context().indexedParams();
+      assertEquals(1, map.size());
+      assertEquals("123e4567-e89b-12d3-a456-426614174000", map.get("eh_userId1"));
+    }
+
+    @Test
+    @DisplayName("Multiple explicit aliases in same filter")
+    void shouldHandleMultipleExplicitAliases() {
+      Filter result =
+          engine.parseFilter(
+              "eh.userId eq \"#123e4567-e89b-12d3-a456-426614174000\" or ea.userId eq \"#550e8400-e29b-41d4-a716-446655440000\"",
+              "t",
+              null);
+      assertEquals(
+          "eh.user_id = CAST(:eh_userId1 AS UUID) OR ea.user_id = CAST(:ea_userId1 AS UUID)",
+          result.toClause());
+      var map = result.context().indexedParams();
+      assertEquals(2, map.size());
+    }
+
+    @Test
+    @DisplayName("Mix of explicit alias and default prefix")
+    void shouldHandleMixOfExplicitAndDefaultPrefix() {
+      Filter result =
+          engine.parseFilter(
+              "name eq \"test\" and eh.userId eq \"#123e4567-e89b-12d3-a456-426614174000\"",
+              "t",
+              null);
+      assertEquals("t.name = :name1 AND eh.user_id = CAST(:eh_userId1 AS UUID)", result.toClause());
+      var map = result.context().indexedParams();
+      assertEquals(2, map.size());
+    }
+
+    @Test
+    @DisplayName("Explicit alias with string value")
+    void shouldHandleExplicitAliasWithStringValue() {
+      Filter result = engine.parseFilter("ea.status eq \"confirmed\"", "t", null);
+      assertEquals("ea.status = :ea_status1", result.toClause());
+      var map = result.context().indexedParams();
+      assertEquals("confirmed", map.get("ea_status1"));
+    }
+
+    @Test
+    @DisplayName("Explicit alias with present operator")
+    void shouldHandleExplicitAliasWithPresentOperator() {
+      Filter result = engine.parseFilter("eh.userId pr", "t", null);
+      assertEquals("eh.user_id IS NOT NULL", result.toClause());
+    }
+  }
+
+  @Nested
+  @DisplayName("UUID Tests")
+  class UuidTests {
+
+    @Test
+    @DisplayName("UUID equal operator with automatic casting")
+    void shouldHandleUuidEqualOperator() {
+      Filter result =
+          engine.parseFilter("id eq \"#123e4567-e89b-12d3-a456-426614174000\"", "t", null);
+      assertEquals("t.id = CAST(:id1 AS UUID)", result.toClause());
+      var map = result.context().indexedParams();
+      assertEquals(1, map.size());
+      assertEquals("123e4567-e89b-12d3-a456-426614174000", map.get("id1").toString());
+    }
+
+    @Test
+    @DisplayName("UUID not equal operator with automatic casting")
+    void shouldHandleUuidNotEqualOperator() {
+      Filter result =
+          engine.parseFilter("userId ne \"#550e8400-e29b-41d4-a716-446655440000\"", "t", null);
+      assertEquals("t.user_id != CAST(:userId1 AS UUID)", result.toClause());
+      var map = result.context().indexedParams();
+      assertEquals(1, map.size());
+      assertEquals("550e8400-e29b-41d4-a716-446655440000", map.get("userId1").toString());
+    }
+
+    @Test
+    @DisplayName("UUID in complex filter")
+    void shouldHandleUuidInComplexFilter() {
+      Filter result =
+          engine.parseFilter(
+              "id eq \"#123e4567-e89b-12d3-a456-426614174000\" and active eq true", "t", null);
+      assertEquals("t.id = CAST(:id1 AS UUID) AND t.active = :active1", result.toClause());
+      var map = result.context().indexedParams();
+      assertEquals(2, map.size());
+      assertEquals("123e4567-e89b-12d3-a456-426614174000", map.get("id1").toString());
+      assertEquals(true, map.get("active1"));
+    }
+
+    @Test
+    @DisplayName("Multiple UUIDs in filter")
+    void shouldHandleMultipleUuids() {
+      Filter result =
+          engine.parseFilter(
+              "id eq \"#123e4567-e89b-12d3-a456-426614174000\" or id eq \"#550e8400-e29b-41d4-a716-446655440000\"",
+              "t",
+              null);
+      assertEquals("t.id = CAST(:id1 AS UUID) OR t.id = CAST(:id2 AS UUID)", result.toClause());
+      var map = result.context().indexedParams();
+      assertEquals(2, map.size());
+      assertEquals("123e4567-e89b-12d3-a456-426614174000", map.get("id1").toString());
+      assertEquals("550e8400-e29b-41d4-a716-446655440000", map.get("id2").toString());
+    }
+
+    @Test
+    @DisplayName("UUID with nested attribute path")
+    void shouldHandleUuidWithNestedPath() {
+      Filter result =
+          engine.parseFilter("user.id eq \"#123e4567-e89b-12d3-a456-426614174000\"", "t", null);
+      String clause = result.toClause();
+      assertTrue(
+          clause.contains("CAST(") && clause.contains("AS UUID)"),
+          "Should contain UUID cast: " + clause);
+    }
+
+    @Test
+    @DisplayName("Regular string vs UUID string")
+    void shouldDifferentiateRegularStringFromUuid() {
+      Filter regularString = engine.parseFilter("name eq \"john\"", "t", null);
+      assertEquals("t.name = :name1", regularString.toClause());
+
+      Filter uuidString =
+          engine.parseFilter("id eq \"#123e4567-e89b-12d3-a456-426614174000\"", "t", null);
+      assertEquals("t.id = CAST(:id1 AS UUID)", uuidString.toClause());
+    }
+
+    @Test
+    @DisplayName("UUID with uppercase hex digits")
+    void shouldHandleUppercaseUuid() {
+      Filter result =
+          engine.parseFilter("id eq \"#123E4567-E89B-12D3-A456-426614174000\"", "t", null);
+      assertEquals("t.id = CAST(:id1 AS UUID)", result.toClause());
+      var map = result.context().indexedParams();
+      assertEquals("123e4567-e89b-12d3-a456-426614174000", map.get("id1").toString());
+    }
+
+    @Test
+    @DisplayName("UUID with mixed case hex digits")
+    void shouldHandleMixedCaseUuid() {
+      Filter result =
+          engine.parseFilter("id eq \"#123e4567-E89b-12D3-a456-426614174000\"", "t", null);
+      assertEquals("t.id = CAST(:id1 AS UUID)", result.toClause());
+      var map = result.context().indexedParams();
+      assertEquals("123e4567-e89b-12d3-a456-426614174000", map.get("id1").toString());
+    }
+  }
+
+  @Nested
+  @DisplayName("JSON Tests")
+  class JsonTests {
+
+    @Test
+    @DisplayName("JSON equal operator with automatic casting and containment")
+    void shouldHandleJsonEqualOperator() {
+      Filter result =
+          engine.parseFilter("metadata eq \"${\\\"key\\\": \\\"value\\\"}\"", "t", null);
+      assertEquals("t.metadata @> CAST(:metadata1 AS jsonb)", result.toClause());
+      var map = result.context().indexedParams();
+      assertEquals(1, map.size());
+      assertEquals("{\"key\": \"value\"}", map.get("metadata1"));
+    }
+
+    @Test
+    @DisplayName("JSON with nested structure")
+    void shouldHandleNestedJsonStructure() {
+      Filter result =
+          engine.parseFilter(
+              "metaQuery eq \"${\\\"request\\\": {\\\"parentId\\\": \\\"123efg\\\"}}\"", "t", null);
+      assertEquals("t.meta_query @> CAST(:metaQuery1 AS jsonb)", result.toClause());
+      var map = result.context().indexedParams();
+      assertEquals("{\"request\": {\"parentId\": \"123efg\"}}", map.get("metaQuery1"));
+    }
+
+    @Test
+    @DisplayName("JSON in complex filter")
+    void shouldHandleJsonInComplexFilter() {
+      Filter result =
+          engine.parseFilter(
+              "metadata eq \"${\\\"status\\\": \\\"active\\\"}\" and name eq \"test\"", "t", null);
+      assertEquals(
+          "t.metadata @> CAST(:metadata1 AS jsonb) AND t.name = :name1", result.toClause());
+      var map = result.context().indexedParams();
+      assertEquals(2, map.size());
+    }
+
+    @Test
+    @DisplayName("Multiple JSON filters")
+    void shouldHandleMultipleJsonFilters() {
+      Filter result =
+          engine.parseFilter(
+              "metadata eq \"${\\\"key1\\\": \\\"value1\\\"}\" and config eq \"${\\\"key2\\\": \\\"value2\\\"}\"",
+              "t",
+              null);
+      assertEquals(
+          "t.metadata @> CAST(:metadata1 AS jsonb) AND t.config @> CAST(:config1 AS jsonb)",
+          result.toClause());
+      var map = result.context().indexedParams();
+      assertEquals(2, map.size());
+    }
+
+    @Test
+    @DisplayName("JSON with array value")
+    void shouldHandleJsonWithArray() {
+      Filter result =
+          engine.parseFilter(
+              "labels eq \"${\\\"tags\\\": [\\\"important\\\", \\\"urgent\\\"]}\"", "t", null);
+      assertEquals("t.labels @> CAST(:labels1 AS jsonb)", result.toClause());
+      var map = result.context().indexedParams();
+      assertEquals("{\"tags\": [\"important\", \"urgent\"]}", map.get("labels1"));
+    }
+
+    @Test
+    @DisplayName("Regular string vs JSON string")
+    void shouldDifferentiateRegularStringFromJson() {
+      Filter regularString = engine.parseFilter("name eq \"test\"", "t", null);
+      assertEquals("t.name = :name1", regularString.toClause());
+
+      Filter jsonString =
+          engine.parseFilter("metadata eq \"${\\\"key\\\": \\\"value\\\"}\"", "t", null);
+      assertEquals("t.metadata @> CAST(:metadata1 AS jsonb)", jsonString.toClause());
+    }
+
+    @Test
+    @DisplayName("JSON, UUID, and timestamp in same filter")
+    void shouldHandleAllSpecialTypesTogether() {
+      Filter result =
+          engine.parseFilter(
+              "id eq \"#123e4567-e89b-12d3-a456-426614174000\" and createdAt gt \"@2025-01-01T00:00:00Z\" and metadata eq \"${\\\"status\\\": \\\"active\\\"}\"",
+              "t",
+              null);
+      assertEquals(
+          "t.id = CAST(:id1 AS UUID) AND t.created_at > CAST(:createdAt1 AS timestamptz) AND t.metadata @> CAST(:metadata1 AS jsonb)",
+          result.toClause());
+      var map = result.context().indexedParams();
+      assertEquals(3, map.size());
+    }
+  }
+
+  @Nested
+  @DisplayName("Timestamp Tests")
+  class TimestampTests {
+
+    @Test
+    @DisplayName("Timestamp equal operator with automatic casting")
+    void shouldHandleTimestampEqualOperator() {
+      Filter result =
+          engine.parseFilter("createdAt eq \"@2025-11-12T22:07:34.995962737Z\"", "t", null);
+      assertEquals("t.created_at = CAST(:createdAt1 AS timestamptz)", result.toClause());
+      var map = result.context().indexedParams();
+      assertEquals(1, map.size());
+      assertEquals("2025-11-12T22:07:34.995962737Z", map.get("createdAt1"));
+    }
+
+    @Test
+    @DisplayName("Timestamp not equal operator with automatic casting")
+    void shouldHandleTimestampNotEqualOperator() {
+      Filter result = engine.parseFilter("updatedAt ne \"@2025-11-15T10:30:00Z\"", "t", null);
+      assertEquals("t.updated_at != CAST(:updatedAt1 AS timestamptz)", result.toClause());
+      var map = result.context().indexedParams();
+      assertEquals(1, map.size());
+      assertEquals("2025-11-15T10:30:00Z", map.get("updatedAt1"));
+    }
+
+    @Test
+    @DisplayName("Timestamp greater than operator")
+    void shouldHandleTimestampGreaterThan() {
+      Filter result = engine.parseFilter("createdAt gt \"@2025-01-01T00:00:00Z\"", "t", null);
+      assertEquals("t.created_at > CAST(:createdAt1 AS timestamptz)", result.toClause());
+      var map = result.context().indexedParams();
+      assertEquals("2025-01-01T00:00:00Z", map.get("createdAt1"));
+    }
+
+    @Test
+    @DisplayName("Timestamp less than operator")
+    void shouldHandleTimestampLessThan() {
+      Filter result = engine.parseFilter("expiresAt lt \"@2026-12-31T23:59:59.999Z\"", "t", null);
+      assertEquals("t.expires_at < CAST(:expiresAt1 AS timestamptz)", result.toClause());
+      var map = result.context().indexedParams();
+      assertEquals("2026-12-31T23:59:59.999Z", map.get("expiresAt1"));
+    }
+
+    @Test
+    @DisplayName("Timestamp in complex filter")
+    void shouldHandleTimestampInComplexFilter() {
+      Filter result =
+          engine.parseFilter(
+              "createdAt gt \"@2025-01-01T00:00:00Z\" and active eq true", "t", null);
+      assertEquals(
+          "t.created_at > CAST(:createdAt1 AS timestamptz) AND t.active = :active1",
+          result.toClause());
+      var map = result.context().indexedParams();
+      assertEquals(2, map.size());
+      assertEquals("2025-01-01T00:00:00Z", map.get("createdAt1"));
+      assertEquals(true, map.get("active1"));
+    }
+
+    @Test
+    @DisplayName("Timestamp with varying precision")
+    void shouldHandleTimestampWithVaryingPrecision() {
+      Filter noMillis = engine.parseFilter("createdAt eq \"@2025-11-12T22:07:34Z\"", "t", null);
+      assertEquals("t.created_at = CAST(:createdAt1 AS timestamptz)", noMillis.toClause());
+
+      Filter withMillis =
+          engine.parseFilter("updatedAt eq \"@2025-11-12T22:07:34.995Z\"", "t", null);
+      assertEquals("t.updated_at = CAST(:updatedAt1 AS timestamptz)", withMillis.toClause());
+
+      Filter withMicros =
+          engine.parseFilter("modifiedAt eq \"@2025-11-12T22:07:34.995962Z\"", "t", null);
+      assertEquals("t.modified_at = CAST(:modifiedAt1 AS timestamptz)", withMicros.toClause());
+
+      Filter withNanos =
+          engine.parseFilter("processedAt eq \"@2025-11-12T22:07:34.995962737Z\"", "t", null);
+      assertEquals("t.processed_at = CAST(:processedAt1 AS timestamptz)", withNanos.toClause());
+    }
+
+    @Test
+    @DisplayName("Multiple timestamps in filter")
+    void shouldHandleMultipleTimestamps() {
+      Filter result =
+          engine.parseFilter(
+              "createdAt gt \"@2025-01-01T00:00:00Z\" and createdAt lt \"@2025-12-31T23:59:59Z\"",
+              "t",
+              null);
+      assertEquals(
+          "t.created_at > CAST(:createdAt1 AS timestamptz) AND t.created_at < CAST(:createdAt2 AS timestamptz)",
+          result.toClause());
+      var map = result.context().indexedParams();
+      assertEquals(2, map.size());
+      assertEquals("2025-01-01T00:00:00Z", map.get("createdAt1"));
+      assertEquals("2025-12-31T23:59:59Z", map.get("createdAt2"));
+    }
+
+    @Test
+    @DisplayName("Timestamp and UUID in same filter")
+    void shouldHandleTimestampAndUuidTogether() {
+      Filter result =
+          engine.parseFilter(
+              "id eq \"#123e4567-e89b-12d3-a456-426614174000\" and createdAt gt \"@2025-01-01T00:00:00Z\"",
+              "t",
+              null);
+      assertEquals(
+          "t.id = CAST(:id1 AS UUID) AND t.created_at > CAST(:createdAt1 AS timestamptz)",
+          result.toClause());
+      var map = result.context().indexedParams();
+      assertEquals(2, map.size());
+    }
+
+    @Test
+    @DisplayName("Regular string vs timestamp string")
+    void shouldDifferentiateRegularStringFromTimestamp() {
+      Filter regularString = engine.parseFilter("name eq \"2025-11-12\"", "t", null);
+      assertEquals("t.name = :name1", regularString.toClause());
+
+      Filter timestampString =
+          engine.parseFilter("createdAt eq \"@2025-11-12T22:07:34Z\"", "t", null);
+      assertEquals("t.created_at = CAST(:createdAt1 AS timestamptz)", timestampString.toClause());
+    }
+  }
+
+  @Nested
+  @DisplayName("Whole Input")
+  class WholeInputTests {
+
+    @ParameterizedTest(name = "rejects [{0}]")
+    @ValueSource(
+        strings = {
+          "userName eq \"john\") or (active pr",
+          "userName eq \"john\")",
+          "userName eq \"john\" or",
+          "userName eq \"john\" and ",
+          "userName eq \"john\" active pr",
+          "userName eq \"john\" extra",
+          "userName pr pr",
+          "userName eq \"john\"\"jane\"",
+          "(userName eq \"john\") (active pr)",
+          "userName eq \"john\" or active pr)"
+        })
+    @DisplayName("Input left after a complete filter")
+    void shouldRejectInputLeftAfterACompleteFilter(String filter) {
+      assertThrows(IllegalArgumentException.class, () -> engine.parseFilter(filter, "t", null));
+    }
+
+    @ParameterizedTest(name = "rejects [{0}]")
+    @ValueSource(
+        strings = {
+          "userName eq \"john\";",
+          "userName eq \"john\" -- comment",
+          "userName eq 'john'",
+          "userName eq \"john\"\tand active pr",
+          "userName eq \"john\"\nor active pr",
+          "userName eq \"john",
+          "userName = \"john\"",
+          "userName eq \"john\" && active pr",
+          "user*Name pr",
+          "userName eq \"john\" or active pr;"
+        })
+    @DisplayName("Characters outside the grammar")
+    void shouldRejectCharactersOutsideTheGrammar(String filter) {
+      assertThrows(IllegalArgumentException.class, () -> engine.parseFilter(filter, "t", null));
+    }
+
+    @Test
+    @DisplayName("Error names the position of the first unexpected input")
+    void shouldReportThePositionOfUnexpectedInput() {
+      var ex =
+          assertThrows(
+              IllegalArgumentException.class,
+              () -> engine.parseFilter("userName eq \"john\") or (active pr", "t", null));
+      assertTrue(ex.getMessage().contains("position 18"), ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("Error names the position of a character outside the grammar")
+    void shouldReportThePositionOfAnUnknownCharacter() {
+      var ex =
+          assertThrows(
+              IllegalArgumentException.class,
+              () -> engine.parseFilter("userName eq \"john\";", "t", null));
+      assertTrue(ex.getMessage().contains("position 18"), ex.getMessage());
+    }
+
+    @ParameterizedTest(name = "is a syntax error [{0}]")
+    @ValueSource(
+        strings = {"userName eq", "userName eq \"john\") or (active pr", "userName eq \"john\";"})
+    @DisplayName("A filter that does not parse is a FilterSyntaxException")
+    void shouldThrowFilterSyntaxExceptionForAFilterThatDoesNotParse(String filter) {
+      assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(filter, "t", null));
+    }
+
+    @ParameterizedTest(name = "is out of range [{0}]")
+    @ValueSource(
+        strings = {
+          "age gt 99999999999999999999",
+          "age gt -99999999999999999999",
+          "id in [1, 99999999999999999999]",
+          "age gt 1E-2",
+          "age gt 1E+30"
+        })
+    @DisplayName("A whole number that does not fit is a FilterSyntaxException")
+    void shouldThrowFilterSyntaxExceptionForAWholeNumberThatDoesNotFit(String filter) {
+      var ex =
+          assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(filter, "t", null));
+      assertTrue(ex.getMessage().startsWith("Failed to parse filter: "), ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("A whole number written with an exponent")
+    void shouldHandleAWholeNumberWithAnExponent() {
+      Filter result = engine.parseFilter("age gt 1E+5", "t", null);
+      assertEquals("t.age > :age1", result.toClause());
+      assertEquals(100_000L, result.context().indexedParams().get("age1"));
+    }
+
+    @Test
+    @DisplayName("Parentheses nested to the limit")
+    void shouldAcceptParenthesesNestedToTheLimit() {
+      var filter = "(".repeat(50) + "active pr" + ")".repeat(50);
+      Filter result = engine.parseFilter(filter, "t", null);
+      assertEquals("(".repeat(50) + "t.active IS NOT NULL" + ")".repeat(50), result.toClause());
+    }
+
+    @Test
+    @DisplayName("Parentheses nested past the limit")
+    void shouldRejectParenthesesNestedPastTheLimit() {
+      var filter = "(".repeat(51) + "active pr" + ")".repeat(51);
+      var ex =
+          assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(filter, "t", null));
+      assertEquals(
+          "Failed to parse filter: Invalid filter syntax at position 50:"
+              + " nested deeper than 50 levels",
+          ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("Negations count as nesting")
+    void shouldCountNegationsAsNesting() {
+      var filter = "not (".repeat(51) + "active pr" + ")".repeat(51);
+      assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(filter, "t", null));
+    }
+
+    @Test
+    @DisplayName("Parentheses that close do not add up")
+    void shouldNotCountClosedParenthesesAsNesting() {
+      var filter = "(active pr)" + " and (active pr)".repeat(200);
+      assertNotNull(engine.parseFilter(filter, "t", null).toClause());
+    }
+
+    @Test
+    @DisplayName("Parentheses inside a string value are not nesting")
+    void shouldNotCountParenthesesInsideAStringAsNesting() {
+      var filter = "name eq \"" + "(".repeat(500) + "\"";
+      Filter result = engine.parseFilter(filter, "t", null);
+      assertEquals("t.name = :name1", result.toClause());
+      assertEquals("(".repeat(500), result.context().indexedParams().get("name1"));
+    }
+
+    @Test
+    @DisplayName("Logical operators up to the limit")
+    void shouldAcceptLogicalOperatorsUpToTheLimit() {
+      var filter = "active pr" + " and active pr".repeat(500);
+      assertNotNull(engine.parseFilter(filter, "t", null).toClause());
+    }
+
+    @Test
+    @DisplayName("Logical operators past the limit")
+    void shouldRejectLogicalOperatorsPastTheLimit() {
+      var filter = "active pr" + " or active pr".repeat(501);
+      var ex =
+          assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(filter, "t", null));
+      assertTrue(ex.getMessage().endsWith("more than 500 logical operators"), ex.getMessage());
+    }
+
+    @ParameterizedTest(name = "rejects [{0}]")
+    @ValueSource(
+        strings = {
+          "emails.work.value co \"x\"",
+          "a.b.c pr",
+          "a.b.c.d eq 1",
+          "u.name.x in [1, 2]",
+          "name pr and a.b.c pr",
+          "a..b pr",
+          "a. pr",
+          "a.b. pr"
+        })
+    @DisplayName("An attribute path deeper than alias.attribute")
+    void shouldRejectAnAttributePathDeeperThanAliasAndAttribute(String filter) {
+      assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(filter, "t", null));
+    }
+
+    @Test
+    @DisplayName("The error points at the segment that is not supported")
+    void shouldPointAtTheUnsupportedPathSegment() {
+      var filter = "emails.work.value co \"x\"";
+      var ex =
+          assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(filter, "t", null));
+      assertEquals(
+          "Failed to parse filter: Invalid filter syntax at position "
+              + "emails.work".length()
+              + ": attribute path deeper than alias.attribute",
+          ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("An aliased attribute is kept whole")
+    void shouldKeepAnAliasedAttributeWhole() {
+      Filter result = engine.parseFilter("u.userName eq \"john\" and active pr", "t", null);
+      assertEquals("u.user_name = :u_userName1 AND t.active IS NOT NULL", result.toClause());
+    }
+
+    @Test
+    @DisplayName("Aliased attributes do not add up across the filter")
+    void shouldAcceptManyAliasedAttributes() {
+      var filter = "a.b pr" + " and a.b pr".repeat(50);
+      assertNotNull(engine.parseFilter(filter, "t", null).toClause());
+    }
+
+    @ParameterizedTest(name = "rejects without overflowing the stack [{0}]")
+    @ValueSource(strings = {"(", "not (", "a."})
+    @DisplayName("Input built to exhaust the stack is rejected")
+    void shouldRejectInputBuiltToExhaustTheStack(String unit) {
+      var filter = unit.repeat(200_000) + "a pr";
+      assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(filter, "t", null));
+    }
+
+    @Test
+    @DisplayName("A chain built to exhaust the stack is rejected")
+    void shouldRejectAChainBuiltToExhaustTheStack() {
+      var filter = "active pr" + " and active pr".repeat(200_000);
+      assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(filter, "t", null));
+    }
+
+    @Test
+    @DisplayName("A long list of values is not limited")
+    void shouldAcceptALongListOfValues() {
+      var filter = "id in [" + "1, ".repeat(20_000) + "1]";
+      Filter result = engine.parseFilter(filter, "t", null);
+      assertNotNull(result.toClause());
+      assertEquals(20_001, result.context().indexedParams().size());
+    }
+
+    @Test
+    @DisplayName("Error position after a line break inside a string value")
+    void shouldReportThePositionAfterALineBreakInAString() {
+      var filter = "note eq \"line one\nline two\" and status eq";
+      var ex =
+          assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(filter, "t", null));
+      assertTrue(ex.getMessage().contains("position " + filter.length() + ":"), ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("Error position after characters outside the basic plane")
+    void shouldReportThePositionAfterSupplementaryCharacters() {
+      var filter = "  name eq \"\uD83D\uDE00\uD83D\uDE00\nb\";";
+      var ex =
+          assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(filter, "t", null));
+      assertTrue(
+          ex.getMessage().contains("position " + filter.indexOf(';') + ":"), ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("Error position of an unterminated string")
+    void shouldReportThePositionOfAnUnterminatedString() {
+      var filter = "name eq \"john";
+      var ex =
+          assertThrows(FilterSyntaxException.class, () -> engine.parseFilter(filter, "t", null));
+      assertTrue(
+          ex.getMessage().contains("position " + filter.indexOf('"') + ":"), ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("The evaluator visits the entry rule")
+    void shouldEvaluateTheEntryRule() {
+      var parser =
+          new ScimParser(new CommonTokenStream(new ScimLexer(CharStreams.fromString("active pr"))));
+      Filter result = new ScimEvaluator("t", null).visit(parser.filter());
+      assertNotNull(result);
+      assertEquals("t.active IS NOT NULL", result.toClause());
+    }
+
+    @Test
+    @DisplayName("Null prefix")
+    void shouldRejectANullPrefixBeforeParsing() {
+      var ex =
+          assertThrows(
+              IllegalArgumentException.class, () -> engine.parseFilter("active pr)", null, null));
+      assertEquals("Prefix must be specified", ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("Error position counts leading whitespace")
+    void shouldReportThePositionInTheOriginalInput() {
+      var ex =
+          assertThrows(
+              IllegalArgumentException.class,
+              () -> engine.parseFilter("  userName eq \"john\";", "t", null));
+      assertTrue(ex.getMessage().contains("position 20"), ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("A null filter is the caller's error, not a filter syntax error")
+    void shouldBlameTheCallerForANullFilter() {
+      var ex =
+          assertThrows(IllegalArgumentException.class, () -> engine.parseFilter(null, "t", null));
+      assertEquals(IllegalArgumentException.class, ex.getClass());
+      assertEquals("Filter must be specified", ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("A blank filter is the caller's error, not a filter syntax error")
+    void shouldBlameTheCallerForABlankFilter() {
+      var ex =
+          assertThrows(IllegalArgumentException.class, () -> engine.parseFilter("   ", "t", null));
+      assertEquals(IllegalArgumentException.class, ex.getClass());
+      assertEquals("Filter must be specified", ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("Surrounding whitespace is ignored")
+    void shouldIgnoreSurroundingWhitespace() {
+      Filter result = engine.parseFilter("  userName eq \"john\" \n", "t", null);
+      assertEquals("t.user_name = :userName1", result.toClause());
+    }
+
+    @Test
+    @DisplayName("Syntax inside a string value stays data")
+    void shouldKeepSyntaxInsideAStringAsData() {
+      Filter result = engine.parseFilter("name eq \"a) or (b; -- 'x'\"", "t", null);
+      assertEquals("t.name = :name1", result.toClause());
+      assertEquals("a) or (b; -- 'x'", result.context().indexedParams().get("name1"));
+    }
+
+    @Test
+    @DisplayName("and binds tighter than or, as in SQL")
+    void shouldRenderMixedOperatorsWithSqlPrecedence() {
+      Filter result = engine.parseFilter("a eq 1 or b eq 2 and c eq 3", "t", null);
+      assertEquals("t.a = :a1 OR t.b = :b1 AND t.c = :c1", result.toClause());
+    }
+  }
+
+  @Nested
+  @DisplayName("Parameter Keys")
+  class ParameterKeyTests {
+
+    @Test
+    @DisplayName("An aliased attribute and an underscore attribute keep separate parameters")
+    void shouldKeepSeparateParametersForNamesThatFlattenAlike() {
+      Filter result = engine.parseFilter("u.name eq \"alice\" and u_name eq \"bob\"", "t", null);
+
+      assertEquals("u.name = :u_name1 AND t.u_name = :u_name2", result.toClause());
+      assertEquals(Map.of("u_name1", "alice", "u_name2", "bob"), result.context().indexedParams());
+    }
+
+    @Test
+    @DisplayName("List checks on names that flatten alike keep separate parameters")
+    void shouldKeepSeparateListParametersForNamesThatFlattenAlike() {
+      Filter result = engine.parseFilter("u.id in [1, 2] and u_id in [3]", "t", null);
+
+      assertEquals("u.id IN (:u_id1, :u_id2) AND t.u_id IN (:u_id3)", result.toClause());
+      assertEquals(Map.of("u_id1", 1L, "u_id2", 2L, "u_id3", 3L), result.context().indexedParams());
+    }
+
+    @Test
+    @DisplayName(
+        "A comparison and a list check on names that flatten alike keep separate parameters")
+    void shouldKeepSeparateParametersAcrossComparisonsAndListChecks() {
+      Filter result = engine.parseFilter("u_id eq 9 and u.id in [1, 2]", "t", null);
+
+      assertEquals("t.u_id = :u_id1 AND u.id IN (:u_id2, :u_id3)", result.toClause());
+      assertEquals(Map.of("u_id1", 9L, "u_id2", 1L, "u_id3", 2L), result.context().indexedParams());
+    }
+
+    @Test
+    @DisplayName("Repeated use of one attribute still counts from one")
+    void shouldCountRepeatedUseOfOneAttributeFromOne() {
+      Filter result = engine.parseFilter("name eq \"a\" or name eq \"b\" or age gt 1", "t", null);
+
+      assertEquals("t.name = :name1 OR t.name = :name2 OR t.age > :age1", result.toClause());
+      assertEquals(
+          Map.of("name", List.of("a", "b"), "age", List.of(1L)), result.context().params());
+    }
+  }
+
+  @Nested
+  @DisplayName("Allowlist")
+  class AllowlistTests {
+
+    @Test
+    @DisplayName("A presence check on an attribute outside the allowlist is invalid")
+    void shouldRejectAPresenceCheckOutsideTheAllowlist() {
+      Filter result = engine.parseFilter("secret pr", "t", null);
+      assertFalse(result.context().isValid(Set.of("name")));
+
+      result.toClause();
+      assertFalse(result.context().isValid(Set.of("name")));
+      assertTrue(result.context().isValid(Set.of("secret")));
+    }
+
+    @Test
+    @DisplayName("A presence check hidden among allowed comparisons is invalid")
+    void shouldRejectAPresenceCheckAmongAllowedComparisons() {
+      Filter result = engine.parseFilter("name eq \"John\" and secret pr and age gt 21", "t", null);
+      result.toClause();
+
+      assertFalse(result.context().isValid(Set.of("name", "age")));
+      assertTrue(result.context().isValid(Set.of("name", "age", "secret")));
+    }
+
+    @ParameterizedTest(name = "is invalid [{0}]")
+    @ValueSource(
+        strings = {
+          "not (secret pr)",
+          "name eq \"John\" or (age gt 21 and (secret pr))",
+          "not (name eq \"John\" and not (secret pr))"
+        })
+    @DisplayName("A presence check is seen wherever it is nested")
+    void shouldSeeAPresenceCheckWhereverItIsNested(String filter) {
+      Filter result = engine.parseFilter(filter, "t", null);
+      assertFalse(result.context().isValid(Set.of("name", "age")));
+    }
+
+    @Test
+    @DisplayName("The allowlist applies before the clause is rendered")
+    void shouldApplyTheAllowlistBeforeRendering() {
+      Filter result = engine.parseFilter("name eq \"John\" and age gt 21", "t", null);
+
+      assertFalse(result.context().isValid(Set.of("name")));
+      assertTrue(result.context().isValid(Set.of("name", "age")));
+    }
+
+    @Test
+    @DisplayName("The allowlist applies to a list check before the clause is rendered")
+    void shouldApplyTheAllowlistToAListCheckBeforeRendering() {
+      Filter result = engine.parseFilter("id in [1, 2]", "t", null);
+
+      assertFalse(result.context().isValid(Set.of("name")));
+      assertTrue(result.context().isValid(Set.of("id")));
+    }
+
+    @Test
+    @DisplayName("An aliased attribute is checked by its full path")
+    void shouldCheckAnAliasedAttributeByItsFullPath() {
+      Filter result = engine.parseFilter("u.userName pr and u.email eq \"a@b.c\"", "t", null);
+
+      assertFalse(result.context().isValid(Set.of("userName", "email")));
+      assertTrue(result.context().isValid(Set.of("u.userName", "u.email")));
+    }
+
+    @Test
+    @DisplayName("A custom comparison builder does not hide the attribute")
+    void shouldSeeTheAttributeThroughACustomComparisonBuilder() {
+      Filter result =
+          engine.parseFilter("tags eq \"admin\"", "t", ComparisonFilter.ListFilter::new);
+
+      assertFalse(result.context().isValid(Set.of("name")));
+      assertTrue(result.context().isValid(Set.of("tags")));
+    }
+
+    @Test
+    @DisplayName("Rendering does not change the verdict")
+    void shouldGiveTheSameVerdictBeforeAndAfterRendering() {
+      Filter result =
+          engine.parseFilter("name eq \"John\" and age gt 21 and id in [1, 2]", "t", null);
+      var before = result.context().isValid(Set.of("name", "age", "id"));
+      result.toClause();
+      result.toClause();
+
+      assertTrue(before);
+      assertTrue(result.context().isValid(Set.of("name", "age", "id")));
+      assertFalse(result.context().isValid(Set.of("name", "age")));
+    }
+
+    @Test
+    @DisplayName("A builder that renames the attribute is checked by the new name only")
+    void shouldCheckARenamedAttributeByItsNewName() {
+      Filter result =
+          engine.parseFilter(
+              "email eq \"a@b.c\"",
+              "t",
+              cf ->
+                  new ComparisonFilter(
+                      new AttributeFilter("emailAddress", null, "u", cf.context()),
+                      cf.operator(),
+                      cf.value(),
+                      cf.context()));
+
+      assertTrue(result.context().isValid(Set.of("emailAddress")));
+      assertFalse(result.context().isValid(Set.of("email")));
+      assertEquals("u.email_address = :emailAddress1", result.toClause());
+      assertTrue(result.context().isValid(Set.of("emailAddress")));
+    }
+
+    @Test
+    @DisplayName("A client filter can be checked on its own before it is scoped")
+    void shouldCheckAClientFilterBeforeScoping() {
+      var clientFilter = "name eq \"John\"";
+      var clientIsValid =
+          engine.parseFilter(clientFilter, "t", null).context().isValid(Set.of("name"));
+      var scoped = engine.scopeFilter("not (deletedAt pr)", clientFilter);
+
+      assertTrue(clientIsValid);
+      assertFalse(engine.parseFilter(scoped, "t", null).context().isValid(Set.of("name")));
+      assertTrue(
+          engine.parseFilter(scoped, "t", null).context().isValid(Set.of("name", "deletedAt")));
+    }
+  }
+
+  @Nested
+  @DisplayName("Scope Filter")
+  class ScopeFilterTests {
+
+    private static final String OWNER = "ownerId eq \"#59b47990-39d1-46c7-ac88-0808abd49a94\"";
+
+    @Test
+    @DisplayName("A filter with or stays inside the scope")
+    void shouldKeepAnOrFilterInsideTheScope() {
+      var scoped = engine.scopeFilter(OWNER, "status eq \"open\" or status pr");
+      assertEquals("(" + OWNER + ") and (status eq \"open\" or status pr)", scoped);
+
+      Filter result = engine.parseFilter(scoped, "t", null);
+      assertEquals(
+          "(t.owner_id = CAST(:ownerId1 AS UUID)) AND (t.status = :status1 OR t.status IS NOT NULL)",
+          result.toClause());
+    }
+
+    @Test
+    @DisplayName("A filter naming the scope attribute cannot widen the scope")
+    void shouldKeepAFilterOnTheScopeAttributeInsideTheScope() {
+      var scoped =
+          engine.scopeFilter(
+              OWNER, "ownerId eq \"#00000000-0000-0000-0000-000000000002\" or status pr");
+
+      Filter result = engine.parseFilter(scoped, "t", null);
+      assertEquals(
+          "(t.owner_id = CAST(:ownerId1 AS UUID))"
+              + " AND (t.owner_id = CAST(:ownerId2 AS UUID) OR t.status IS NOT NULL)",
+          result.toClause());
+    }
+
+    @Test
+    @DisplayName("A scope with or stays grouped")
+    void shouldKeepAScopeWithOrGrouped() {
+      var scoped = engine.scopeFilter("a eq 1 or b eq 2", "c eq 3");
+
+      Filter result = engine.parseFilter(scoped, "t", null);
+      assertEquals("(t.a = :a1 OR t.b = :b1) AND (t.c = :c1)", result.toClause());
+    }
+
+    @Test
+    @DisplayName("A negated filter stays inside the scope")
+    void shouldKeepANegatedFilterInsideTheScope() {
+      var scoped = engine.scopeFilter(OWNER, "not (status eq \"open\")");
+
+      Filter result = engine.parseFilter(scoped, "t", null);
+      assertEquals(
+          "(t.owner_id = CAST(:ownerId1 AS UUID)) AND (NOT (t.status = :status1))",
+          result.toClause());
+    }
+
+    @Test
+    @DisplayName("Scopes nest")
+    void shouldNestScopes() {
+      var scoped = engine.scopeFilter(OWNER, engine.scopeFilter("active eq true", "age gt 21"));
+
+      Filter result = engine.parseFilter(scoped, "t", null);
+      assertEquals(
+          "(t.owner_id = CAST(:ownerId1 AS UUID)) AND ((t.active = :active1) AND (t.age > :age1))",
+          result.toClause());
+    }
+
+    @ParameterizedTest(name = "returns the scope alone for [{0}]")
+    @ValueSource(strings = {"", "   ", "\t\n"})
+    @DisplayName("No filter")
+    void shouldReturnTheScopeAloneWhenThereIsNoFilter(String filter) {
+      assertEquals(OWNER, engine.scopeFilter(OWNER, filter));
+    }
+
+    @Test
+    @DisplayName("Null filter")
+    void shouldReturnTheScopeAloneForANullFilter() {
+      assertEquals(OWNER, engine.scopeFilter(OWNER, null));
+    }
+
+    @Test
+    @DisplayName("Surrounding whitespace is dropped from both parts")
+    void shouldDropSurroundingWhitespace() {
+      assertEquals(
+          "(" + OWNER + ") and (status pr)",
+          engine.scopeFilter("  " + OWNER + " ", " status pr\n"));
+      assertEquals(OWNER, engine.scopeFilter(" " + OWNER + "  ", null));
+    }
+
+    @ParameterizedTest(name = "rejects [{0}]")
+    @ValueSource(
+        strings = {
+          "status eq \"open\") or (status pr",
+          "status pr) or (status pr",
+          "status pr) or ownerId pr or (status pr",
+          "status eq \"open\" or",
+          "status eq \"open\";",
+          "status eq \"open",
+          "(status pr"
+        })
+    @DisplayName("A filter that is not one complete filter")
+    void shouldRejectAFilterThatIsNotOneCompleteFilter(String filter) {
+      assertThrows(IllegalArgumentException.class, () -> engine.scopeFilter(OWNER, filter));
+    }
+
+    @ParameterizedTest(name = "rejects scope [{0}]")
+    @ValueSource(strings = {"", "  ", "ownerId eq", "ownerId pr) or (ownerId pr"})
+    @DisplayName("A scope that is missing or not one complete filter")
+    void shouldRejectAScopeThatIsMissingOrIncomplete(String scope) {
+      assertThrows(IllegalArgumentException.class, () -> engine.scopeFilter(scope, "status pr"));
+    }
+
+    @Test
+    @DisplayName("A filter that does not parse is a FilterSyntaxException")
+    void shouldThrowFilterSyntaxExceptionForAFilterThatDoesNotParse() {
+      assertThrows(
+          FilterSyntaxException.class,
+          () -> engine.scopeFilter(OWNER, "status eq \"open\") or (status pr"));
+    }
+
+    @Test
+    @DisplayName("A filter with a whole number that does not fit is rejected up front")
+    void shouldRejectAFilterWithANumberThatDoesNotFit() {
+      assertThrows(
+          FilterSyntaxException.class,
+          () -> engine.scopeFilter(OWNER, "age gt 99999999999999999999"));
+    }
+
+    @Test
+    @DisplayName("A filter nested past the limit is rejected up front")
+    void shouldRejectAFilterNestedPastTheLimit() {
+      var filter = "(".repeat(51) + "active pr" + ")".repeat(51);
+      assertThrows(FilterSyntaxException.class, () -> engine.scopeFilter(OWNER, filter));
+    }
+
+    @Test
+    @DisplayName("A filter nested to the limit is rejected, because the scope adds a level")
+    void shouldRejectAFilterThatTheScopeWouldPushPastTheLimit() {
+      var filter = "(".repeat(50) + "active pr" + ")".repeat(50);
+      assertThrows(FilterSyntaxException.class, () -> engine.scopeFilter(OWNER, filter));
+    }
+
+    @Test
+    @DisplayName("Whatever scopeFilter accepts, parseFilter accepts")
+    void shouldOnlyReturnExpressionsThatParse() {
+      var filter = "(".repeat(49) + "active pr" + ")".repeat(49);
+      var scoped = engine.scopeFilter(OWNER, filter);
+      assertNotNull(engine.parseFilter(scoped, "t", null).toClause());
+    }
+
+    @Test
+    @DisplayName("A scope that does not parse is the caller's error, not a filter syntax error")
+    void shouldBlameTheCallerForAScopeThatDoesNotParse() {
+      var ex =
+          assertThrows(
+              IllegalArgumentException.class, () -> engine.scopeFilter("ownerId eq", "status pr"));
+      assertEquals(IllegalArgumentException.class, ex.getClass());
+      assertTrue(ex.getMessage().startsWith("Scope filter is not a valid filter"), ex.getMessage());
+      assertInstanceOf(FilterSyntaxException.class, ex.getCause());
+    }
+
+    @Test
+    @DisplayName("Null scope")
+    void shouldRejectANullScope() {
+      var ex =
+          assertThrows(IllegalArgumentException.class, () -> engine.scopeFilter(null, "status pr"));
+      assertEquals("Scope filter must be specified", ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("A missing scope is rejected even without a filter")
+    void shouldRejectAMissingScopeEvenWithoutAFilter() {
+      assertThrows(IllegalArgumentException.class, () -> engine.scopeFilter(" ", null));
+    }
+
+    @Test
+    @DisplayName("No generated filter leaves the scope")
+    void shouldNeverLetAGeneratedFilterLeaveTheScope() {
+      var fragments =
+          List.of(
+              "status pr",
+              "status eq \"open\"",
+              "ownerId eq \"#00000000-0000-0000-0000-000000000002\"",
+              "age gt 21",
+              "age gt 99999999999999999999",
+              "id in [1, 2]",
+              " or ",
+              " and ",
+              "not ",
+              "(",
+              ")",
+              " ",
+              "\"",
+              "\\",
+              ";",
+              "'",
+              "--",
+              "[",
+              "]",
+              ",",
+              "pr",
+              "eq",
+              "status",
+              "1",
+              "\t");
+      var random = new Random(20261005L);
+      var accepted = 0;
+      var rejected = 0;
+
+      for (var i = 0; i < 20_000; i++) {
+        var filter = new StringBuilder();
+        var length = 1 + random.nextInt(7);
+        for (var j = 0; j < length; j++) {
+          filter.append(fragments.get(random.nextInt(fragments.size())));
+        }
+
+        String scoped;
+        try {
+          scoped = engine.scopeFilter(OWNER, filter.toString());
+        } catch (IllegalArgumentException ex) {
+          rejected++;
+          continue;
+        }
+        if (filter.toString().isBlank()) {
+          assertEquals(OWNER, scoped);
+          continue;
+        }
+        accepted++;
+
+        var root = assertInstanceOf(AndFilter.class, engine.parseFilter(scoped, "t", null), scoped);
+        var scope = assertInstanceOf(ParenFilter.class, root.left(), scoped);
+        assertEquals("(t.owner_id = CAST(:ownerId1 AS UUID))", scope.toClause(), scoped);
+        assertInstanceOf(ParenFilter.class, root.right(), scoped);
+      }
+
+      assertTrue(accepted > 500, "accepted " + accepted);
+      assertTrue(rejected > 500, "rejected " + rejected);
+    }
+  }
+}
