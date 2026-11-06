@@ -3,8 +3,8 @@
 ## ANTLR grammars-v4 PostgreSQL grammar
 
 The PostgreSQL grammar and its Java support sources under
-`src/main/antlr4/ai/singlr/postgresql/parser/` and
-`src/main/java/ai/singlr/postgresql/parser/` are vendored from the
+`src/main/antlr4/com/standardapplied/postgresql/parser/` and
+`src/main/java/com/standardapplied/postgresql/parser/` are vendored from the
 [ANTLR grammars-v4](https://github.com/antlr/grammars-v4) project.
 
 | | |
@@ -67,7 +67,7 @@ Every deviation from upstream is listed here and marked with a
    with a depth counter instead of the upstream recursive rule, which was
    quadratic-time and could overflow the stack on adversarial nesting.
 8. `*.java` support files — added a
-   `package ai.singlr.postgresql.parser;` declaration (upstream files have no
+   `package com.standardapplied.postgresql.parser;` declaration (upstream files have no
    package). The files are excluded from code formatting to keep them
    diffable against upstream.
 

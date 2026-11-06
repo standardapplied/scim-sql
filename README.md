@@ -2,8 +2,8 @@
 
 Two independent capabilities for **PostgreSQL** in one small library:
 
-1. **SCIM filter → SQL** (`ai.singlr.scimsql`): parses [RFC 7644](https://datatracker.ietf.org/doc/html/rfc7644#section-3.4.2.2) filter strings and produces SQL WHERE clauses with named parameters — safe from injection by design. It parses SCIM filter expressions only; it does not validate full SQL.
-2. **PostgreSQL query analysis** (`ai.singlr.postgresql`): parses complete SQL statements and reports structural facts — statement kind and count, relations, columns, functions, named parameters, and policy-relevant features — without executing SQL or resolving catalog objects. See [PostgreSQL Query Analysis](#postgresql-query-analysis).
+1. **SCIM filter → SQL** (`com.standardapplied.scimsql`): parses [RFC 7644](https://datatracker.ietf.org/doc/html/rfc7644#section-3.4.2.2) filter strings and produces SQL WHERE clauses with named parameters — safe from injection by design. It parses SCIM filter expressions only; it does not validate full SQL.
+2. **PostgreSQL query analysis** (`com.standardapplied.postgresql`): parses complete SQL statements and reports structural facts — statement kind and count, relations, columns, functions, named parameters, and policy-relevant features — without executing SQL or resolving catalog objects. See [PostgreSQL Query Analysis](#postgresql-query-analysis).
 
 The generated SQL uses PostgreSQL-specific syntax for typed values (`CAST(… AS UUID)`, `CAST(… AS timestamptz)`, `CAST(… AS jsonb)`, `@>` for JSON containment). Standard comparisons (`=`, `!=`, `LIKE`, `IN`, `IS NOT NULL`) are portable across databases. The `compareFilterBuilder` extension point allows overriding SQL generation for other databases.
 
@@ -13,11 +13,13 @@ Add the dependency:
 
 ```xml
 <dependency>
-    <groupId>ai.singlr</groupId>
+    <groupId>com.standardapplied</groupId>
     <artifactId>scim-sql</artifactId>
-    <version>1.3.0</version>
+    <version>2.0.0</version>
 </dependency>
 ```
+
+Moving from 1.x: 2.0.0 changes only names. The coordinates `ai.singlr:scim-sql` become `com.standardapplied:scim-sql`, the module `ai.singlr.scimsql` becomes `com.standardapplied.scimsql`, and the packages `ai.singlr.scimsql` and `ai.singlr.postgresql` become `com.standardapplied.scimsql` and `com.standardapplied.postgresql`. Every class, method and behaviour is the same as in 1.3.0.
 
 Parse a SCIM filter into SQL:
 

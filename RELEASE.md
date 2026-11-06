@@ -18,11 +18,11 @@ This project publishes to Maven Central via the [Central Publishing Portal](http
 
 ### 2. Namespace Verification
 
-Claim the `ai.singlr` namespace by adding a DNS TXT record:
+Claim the `com.standardapplied` namespace by adding a DNS TXT record:
 
 1. Go to **Namespaces** in the Central Portal
-2. Click **Add Namespace**, enter `ai.singlr`
-3. Add the provided TXT record to your DNS for `singlr.ai`
+2. Click **Add Namespace**, enter `com.standardapplied`
+3. Add the provided TXT record to your DNS for `standardapplied.com`
 4. Click **Verify** (DNS propagation can take up to 48 hours)
 
 ### 3. GPG Key
@@ -34,8 +34,8 @@ Generate a project-level signing key. This key is used exclusively by CI — no 
 gpg --batch --gen-key <<EOF
 Key-Type: RSA
 Key-Length: 4096
-Name-Real: Singular Release
-Name-Email: release@singlr.ai
+Name-Real: Standard Applied Release
+Name-Email: release@standardapplied.com
 Expire-Date: 2y
 Passphrase: <a-strong-passphrase>
 EOF
@@ -47,7 +47,7 @@ gpg --list-keys --keyid-format short
 gpg --keyserver keyserver.ubuntu.com --send-keys <KEY_ID>
 
 # Export the private key for GitHub Actions
-gpg --export-secret-keys --armor release@singlr.ai
+gpg --export-secret-keys --armor release@standardapplied.com
 ```
 
 Copy the full armored output (including `-----BEGIN PGP PRIVATE KEY BLOCK-----` and `-----END PGP PRIVATE KEY BLOCK-----`).
@@ -130,7 +130,7 @@ The **Release** workflow will automatically:
 Verify the artifact is live:
 
 ```
-https://repo1.maven.org/maven2/ai/singlr/scim-sql/1.0.0/
+https://repo1.maven.org/maven2/com/standardapplied/scim-sql/1.0.0/
 ```
 
 To skip this manual step, add `<autoPublish>true</autoPublish>` to the `central-publishing-maven-plugin` configuration in `pom.xml`.
@@ -171,6 +171,6 @@ git push
 
 **Central Portal rejects deployment**: Check that `pom.xml` has all required metadata — `name`, `description`, `url`, `licenses`, `developers`, `scm`. All are already configured.
 
-**Namespace not verified**: DNS propagation can take up to 48 hours. Verify with `dig TXT singlr.ai`.
+**Namespace not verified**: DNS propagation can take up to 48 hours. Verify with `dig TXT standardapplied.com`.
 
 **Manual deploy (without CI)**: Add Central Portal credentials to `~/.m2/settings.xml` under server id `central`, then run `mvn clean deploy -Prelease`.

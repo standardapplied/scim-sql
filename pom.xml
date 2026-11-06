@@ -4,14 +4,14 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>ai.singlr</groupId>
+    <groupId>com.standardapplied</groupId>
     <artifactId>scim-sql</artifactId>
-    <version>1.4.0-SNAPSHOT</version>
+    <version>2.0.0-SNAPSHOT</version>
     <packaging>jar</packaging>
 
     <name>scim-sql</name>
     <description>SCIM filter expression to parameterized SQL converter and PostgreSQL query analyzer</description>
-    <url>https://github.com/singlr-ai/scim-sql</url>
+    <url>https://github.com/standardapplied/scim-sql</url>
 
     <licenses>
         <license>
@@ -22,16 +22,16 @@
 
     <developers>
         <developer>
-            <name>Singular</name>
-            <organization>Singular</organization>
-            <organizationUrl>https://singlr.ai</organizationUrl>
+            <name>Standard Applied Intelligence Labs</name>
+            <organization>Standard Applied Intelligence Labs</organization>
+            <organizationUrl>https://standardapplied.com</organizationUrl>
         </developer>
     </developers>
 
     <scm>
-        <connection>scm:git:git://github.com/singlr-ai/scim-sql.git</connection>
-        <developerConnection>scm:git:ssh://github.com:singlr-ai/scim-sql.git</developerConnection>
-        <url>https://github.com/singlr-ai/scim-sql</url>
+        <connection>scm:git:git://github.com/standardapplied/scim-sql.git</connection>
+        <developerConnection>scm:git:ssh://github.com:standardapplied/scim-sql.git</developerConnection>
+        <url>https://github.com/standardapplied/scim-sql</url>
     </scm>
 
     <properties>
@@ -88,7 +88,7 @@
                 <targetPath>META-INF</targetPath>
             </resource>
             <resource>
-                <directory>src/main/antlr4/ai/singlr/postgresql/parser</directory>
+                <directory>src/main/antlr4/com/standardapplied/postgresql/parser</directory>
                 <includes>
                     <include>COPYRIGHT</include>
                 </includes>
@@ -134,7 +134,7 @@
                 <configuration>
                     <java>
                         <excludes>
-                            <exclude>src/main/java/ai/singlr/postgresql/parser/**</exclude>
+                            <exclude>src/main/java/com/standardapplied/postgresql/parser/**</exclude>
                         </excludes>
                         <googleJavaFormat>
                             <version>1.27.0</version>
@@ -164,13 +164,13 @@
                 <version>0.8.14</version>
                 <configuration>
                     <excludes>
-                        <exclude>ai/singlr/scimsql/ScimParser*</exclude>
-                        <exclude>ai/singlr/scimsql/ScimLexer*</exclude>
-                        <exclude>ai/singlr/scimsql/ScimBaseVisitor*</exclude>
-                        <exclude>ai/singlr/scimsql/ScimVisitor*</exclude>
-                        <exclude>ai/singlr/scimsql/ScimListener*</exclude>
-                        <exclude>ai/singlr/scimsql/ScimBaseListener*</exclude>
-                        <exclude>ai/singlr/postgresql/parser/**</exclude>
+                        <exclude>com/standardapplied/scimsql/ScimParser*</exclude>
+                        <exclude>com/standardapplied/scimsql/ScimLexer*</exclude>
+                        <exclude>com/standardapplied/scimsql/ScimBaseVisitor*</exclude>
+                        <exclude>com/standardapplied/scimsql/ScimVisitor*</exclude>
+                        <exclude>com/standardapplied/scimsql/ScimListener*</exclude>
+                        <exclude>com/standardapplied/scimsql/ScimBaseListener*</exclude>
+                        <exclude>com/standardapplied/postgresql/parser/**</exclude>
                     </excludes>
                 </configuration>
                 <executions>
